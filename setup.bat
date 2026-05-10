@@ -117,33 +117,23 @@ if "%DESKTOP%"=="" set "DESKTOP=%USERPROFILE%\Desktop"
 
 echo              Desktop found at: %DESKTOP%
 
-REM Create a proper .lnk shortcut with icon using PowerShell
-powershell -NoProfile -Command ^
-  "$ws = New-Object -ComObject WScript.Shell; ^
-   $s = $ws.CreateShortcut('%DESKTOP%\Run Grocery Scraper.lnk'); ^
-   $s.TargetPath = 'python'; ^
-   $s.Arguments = '"%SCRAPER%"'; ^
-   $s.WorkingDirectory = '%SCRIPT_DIR%'; ^
-   $s.Description = 'Run the Grocery Price Scraper'; ^
-   $s.IconLocation = 'C:\Windows\System32\SHELL32.dll,23'; ^
-   $s.Save()"
+REM Create a .bat launcher on the Desktop
+(
+    echo @echo off
+    echo title Grocery Scraper - Running...
+    echo cd /d "%SCRIPT_DIR%"
+    echo echo.
+    echo echo Starting scraper - please wait 15-30 minutes.
+    echo echo Results will be saved as Excel files on your Desktop.
+    echo echo.
+    echo python "%SCRAPER%"
+    echo if %%errorlevel%% neq 0 pause
+) > "%DESKTOP%\Run Grocery Scraper.bat"
 
-if exist "%DESKTOP%\Run Grocery Scraper.lnk" (
-    echo              Shortcut created: "Run Grocery Scraper" on your Desktop.
+if exist "%DESKTOP%\Run Grocery Scraper.bat" (
+    echo              Shortcut created: "Run Grocery Scraper.bat" on your Desktop.
 ) else (
-    echo              Could not create .lnk shortcut. Creating .bat instead...
-    (
-        echo @echo off
-        echo title Grocery Scraper - Running...
-        echo cd /d "%SCRIPT_DIR%"
-        echo echo.
-        echo echo Starting scraper - please wait 15-30 minutes.
-        echo echo Results will be saved as Excel files on your Desktop.
-        echo echo.
-        echo python "%SCRAPER%"
-        echo if %%errorlevel%% neq 0 pause
-    ) > "%DESKTOP%\Run Grocery Scraper.bat"
-    echo              .bat shortcut created instead.
+    echo              Could not create shortcut. Run grocery_scraper.py directly.
 )
 echo.
 
