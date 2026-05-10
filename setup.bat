@@ -23,6 +23,7 @@ if %errorlevel% == 0 (
 py --version >nul 2>&1
 if %errorlevel% == 0 (
     echo              Found via py launcher.
+    set PYTHON=py
     goto :step2
 )
 
@@ -50,7 +51,7 @@ echo  1. Open your browser and go to:  https://www.python.org/downloads/
 echo  2. Click the big Download Python button
 echo  3. Run the downloaded installer
 echo  4. IMPORTANT: Check "Add Python to PATH" before clicking Install
-echo  5. Click "Install Now" and wait for it to finish
+echo  5. Click Install Now and wait for it to finish
 echo  6. Close this window, then double-click setup.bat again
 echo.
 pause
@@ -102,30 +103,47 @@ echo.
 echo              Browser downloaded OK.
 echo.
 
-REM --- STEP 5: Create Desktop shortcut ---
-echo [Step 5 of 5]  Creating Desktop shortcut...
+REM --- STEP 5: Create shortcut on Desktop ---
+echo [Step 5 of 5]  Creating shortcut on your Desktop...
 
 set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "SCRAPER=%SCRIPT_DIR%\grocery_scraper.py"
-set "SHORTCUT=%USERPROFILE%\Desktop\Run Grocery Scraper.bat"
 
-(
-    echo @echo off
-    echo title Grocery Scraper - Running...
-    echo cd /d "%SCRIPT_DIR%"
-    echo echo.
-    echo echo Starting scraper - please wait 15-30 minutes.
-    echo echo Results will be saved as Excel files on your Desktop.
-    echo echo.
-    echo python "%SCRAPER%"
-    echo if %%errorlevel%% neq 0 pause
-) > "%SHORTCUT%"
+REM Get the REAL Desktop path via PowerShell (works with OneDrive too)
+for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"`) do set "DESKTOP=%%D"
 
-if exist "%SHORTCUT%" (
-    echo              Shortcut created on your Desktop.
+if "%DESKTOP%"=="" set "DESKTOP=%USERPROFILE%\Desktop"
+
+echo              Desktop found at: %DESKTOP%
+
+REM Create a proper .lnk shortcut with icon using PowerShell
+powershell -NoProfile -Command ^
+  "$ws = New-Object -ComObject WScript.Shell; ^
+   $s = $ws.CreateShortcut('%DESKTOP%\Run Grocery Scraper.lnk'); ^
+   $s.TargetPath = 'python'; ^
+   $s.Arguments = '"%SCRAPER%"'; ^
+   $s.WorkingDirectory = '%SCRIPT_DIR%'; ^
+   $s.Description = 'Run the Grocery Price Scraper'; ^
+   $s.IconLocation = 'C:\Windows\System32\SHELL32.dll,23'; ^
+   $s.Save()"
+
+if exist "%DESKTOP%\Run Grocery Scraper.lnk" (
+    echo              Shortcut created: "Run Grocery Scraper" on your Desktop.
 ) else (
-    echo              Could not create shortcut. Run grocery_scraper.py directly.
+    echo              Could not create .lnk shortcut. Creating .bat instead...
+    (
+        echo @echo off
+        echo title Grocery Scraper - Running...
+        echo cd /d "%SCRIPT_DIR%"
+        echo echo.
+        echo echo Starting scraper - please wait 15-30 minutes.
+        echo echo Results will be saved as Excel files on your Desktop.
+        echo echo.
+        echo python "%SCRAPER%"
+        echo if %%errorlevel%% neq 0 pause
+    ) > "%DESKTOP%\Run Grocery Scraper.bat"
+    echo              .bat shortcut created instead.
 )
 echo.
 
@@ -136,11 +154,7 @@ echo ============================================================
 echo.
 echo   HOW TO RUN THE SCRAPER:
 echo.
-echo   OPTION A (easiest):
-echo     Double-click "Run Grocery Scraper.bat" on your Desktop
-echo.
-echo   OPTION B:
-echo     Double-click grocery_scraper.py in this folder
+echo     Double-click "Run Grocery Scraper" on your Desktop
 echo.
 echo   The scraper takes 15-30 minutes and saves two Excel files
 echo   to your Desktop when it finishes:
