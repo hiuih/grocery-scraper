@@ -19,11 +19,10 @@ HOW TO RUN:
 import sys, os
 
 try:
-    # Only patch if stdout is connected and encoding is not already UTF-8
     if hasattr(sys.stdout, "reconfigure"):          # Python 3.7+
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    elif hasattr(sys.stdout, "buffer"):             # older fallback
+    elif hasattr(sys.stdout, "buffer"):
         import io
         sys.stdout = io.TextIOWrapper(
             sys.stdout.buffer, encoding="utf-8",
@@ -34,7 +33,7 @@ try:
             errors="replace", line_buffering=True
         )
 except Exception:
-    pass   # If stdout is None or weird, just keep going
+    pass
 
 
 def p(msg="", flush=True):
@@ -60,7 +59,6 @@ def pip_install(pkg):
         capture_output=True, text=True
     )
     if result.returncode != 0:
-        # Try without -q so errors are visible
         subprocess.run([sys.executable, "-m", "pip", "install", pkg])
 
 
@@ -74,7 +72,7 @@ for pkg, import_name in [("playwright", "playwright"), ("openpyxl", "openpyxl")]
         p(f"  [OK] {pkg} installed.")
 
 p("  Checking browser (downloads ~130 MB first time if needed)...")
-result = subprocess.run(
+subprocess.run(
     [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
     capture_output=True, text=True
 )
@@ -82,30 +80,32 @@ p("  [OK] Browser ready.")
 p()
 
 # ─────────────────────────────────────────────────────────────────
-#  STEP 2: Imports (after packages are confirmed installed)
+#  STEP 2: Imports
 # ─────────────────────────────────────────────────────────────────
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-    import re, time
+    import re, time, json
     from datetime import datetime
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 except ImportError as e:
     p(f"  ERROR: Could not import required module: {e}")
     p("  Try running setup.bat again, or run this in a terminal:")
     p("    pip install playwright openpyxl")
     p("    python -m playwright install chromium")
     p()
-    input("  Press ENTER to close...")
+    try:
+        input("  Press ENTER to close...")
+    except EOFError:
+        pass
     sys.exit(1)
 
 # ─────────────────────────────────────────────────────────────────
-#  STEP 3: Find the real Desktop (handles OneDrive / custom paths)
+#  STEP 3: Find the real Desktop (OneDrive-aware)
 # ─────────────────────────────────────────────────────────────────
 def find_desktop():
-    """Return the actual Desktop folder path, OneDrive-aware."""
-    # Windows registry is the most reliable source
     try:
         import winreg
         key = winreg.OpenKey(
@@ -119,19 +119,16 @@ def find_desktop():
     except Exception:
         pass
 
-    # Fallback: common locations
     home = os.path.expanduser("~")
-    candidates = [
+    for path in [
         os.path.join(home, "Desktop"),
         os.path.join(home, "OneDrive", "Desktop"),
         os.path.join(home, "OneDrive - Personal", "Desktop"),
         os.path.join(home, "OneDrive - Commercial", "Desktop"),
-    ]
-    for path in candidates:
+    ]:
         if os.path.isdir(path):
             return path
 
-    # Last resort: create it
     fallback = os.path.join(home, "Desktop")
     os.makedirs(fallback, exist_ok=True)
     return fallback
@@ -170,7 +167,7 @@ FRESH_ST_CATEGORIES = [
 ]
 
 # ─────────────────────────────────────────────────────────────────
-#  STEP 4: Page helpers
+#  STEP 4: CSS selectors for DOM fallback
 # ─────────────────────────────────────────────────────────────────
 CARD_SEL  = "[data-testid^='ProductCardWrapper']"
 NAME_SEL  = "[class*='ProductCardNameWrapper--']"
@@ -180,81 +177,6 @@ UNIT_RE   = re.compile(
     r",\s*\d*\.?\d+\s*(Each|Gram|Kilogram|ml|L|kg|g|lb|oz|pk|pack)\b.*$",
     flags=re.IGNORECASE
 )
-
-
-def scroll_to_load_all(page, max_wait=25):
-    """Scroll page until no new product cards appear."""
-    deadline = time.time() + max_wait
-    prev, stall = 0, 0
-    while time.time() < deadline:
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(1.2)
-        count = page.evaluate(
-            f'document.querySelectorAll("{CARD_SEL}").length'
-        )
-        if count == prev:
-            stall += 1
-            if stall >= 3:
-                break
-        else:
-            stall = 0
-        prev = count
-    page.evaluate("window.scrollTo(0, 0)")
-
-
-def extract_products(page):
-    """Pull all product cards from the currently loaded page."""
-    scroll_to_load_all(page)
-    results = []
-    for card in page.query_selector_all(CARD_SEL):
-        try:
-            raw_id  = card.get_attribute("data-testid").replace("ProductCardWrapper-", "")
-            pnum    = raw_id.lstrip("0") or raw_id
-
-            name_el  = card.query_selector(NAME_SEL)
-            price_el = card.query_selector(PRICE_SEL)
-            was_el   = card.query_selector(WAS_SEL)
-
-            if not name_el:
-                continue
-
-            name = name_el.inner_text().strip()
-            name = name.replace("Open Product Description", "").strip()
-            name = UNIT_RE.sub("", name).strip()
-
-            current = price_el.inner_text().strip() if price_el else ""
-            was_raw = was_el.inner_text().strip()   if was_el   else ""
-            was     = re.sub(r"^was\s*", "", was_raw, flags=re.IGNORECASE).strip()
-
-            results.append({
-                "Product Name":   name,
-                "Product Number": pnum,
-                "Regular Price":  was     if was else current,
-                "Promo Price":    current if was else "",
-            })
-        except Exception:
-            continue
-    return results
-
-
-def has_next_page(page, current_page):
-    """Return True if pagination shows a page beyond current_page."""
-    try:
-        links = page.query_selector_all(
-            "a[class*='Pagination'], button[class*='Pagination']"
-        )
-        for link in links:
-            txt = link.inner_text().strip()
-            if txt.isdigit() and int(txt) > current_page:
-                return True
-        nxt = page.query_selector(
-            "a[aria-label*='Next'], button[aria-label*='Next']"
-        )
-        if nxt and nxt.is_enabled():
-            return True
-    except Exception:
-        pass
-    return False
 
 
 def make_browser(playwright):
@@ -268,12 +190,266 @@ def make_browser(playwright):
         viewport={"width": 1280, "height": 900},
         locale="en-CA",
     )
-    # Only block heavy media — JS/CSS/fonts must load for React to work
+    # Only block heavy media — JS/CSS/fonts must load for React
     ctx.route("**/*.{mp4,mp3,avi,wmv}", lambda r: r.abort())
     return browser, ctx
 
+
 # ─────────────────────────────────────────────────────────────────
-#  STEP 5: Fresh St. Market scraper
+#  STEP 5: API interception helpers
+# ─────────────────────────────────────────────────────────────────
+def _looks_like_products(lst):
+    """Return True if a list looks like a product array."""
+    if not lst or not isinstance(lst, list):
+        return False
+    s = lst[0]
+    if not isinstance(s, dict):
+        return False
+    keys_lower = {k.lower() for k in s.keys()}
+    product_signals = {"sku", "upc", "name", "price", "productid", "displayname",
+                       "itemid", "regularpricestring", "pricestring"}
+    return bool(keys_lower & product_signals)
+
+
+def _fmt_price(v):
+    """Format a raw price value as '$X.XX' or empty string."""
+    if v is None:
+        return ""
+    v = str(v).strip().replace(",", "")
+    if not v or v.lower() in ("0", "0.0", "none", "null", ""):
+        return ""
+    if v.startswith("$"):
+        return v
+    try:
+        return f"${float(v):.2f}"
+    except ValueError:
+        return v
+
+
+def _parse_api_item(item):
+    """Convert one raw API product dict to our standard dict."""
+    pnum = str(
+        item.get("sku") or item.get("upc") or item.get("productId") or
+        item.get("id") or item.get("itemId") or ""
+    ).strip().lstrip("0") or str(item.get("id", ""))
+
+    name = str(
+        item.get("name") or item.get("displayName") or item.get("title") or
+        item.get("productName") or item.get("description") or ""
+    ).strip()
+
+    if not name and not pnum:
+        return None
+
+    # Price – try several nested structures
+    regular = promo = ""
+    pd = item.get("price") or item.get("prices") or item.get("pricing") or {}
+    if isinstance(pd, dict):
+        reg_raw = (pd.get("regular") or pd.get("originalPrice") or
+                   pd.get("listPrice") or pd.get("was") or pd.get("regularPrice") or "")
+        sale_raw = (pd.get("sale") or pd.get("promo") or pd.get("salePrice") or
+                    pd.get("now") or pd.get("promotionalPrice") or "")
+        if not reg_raw:
+            reg_raw = pd.get("current") or pd.get("value") or pd.get("amount") or ""
+        regular = _fmt_price(reg_raw)
+        promo   = _fmt_price(sale_raw)
+    elif isinstance(pd, (int, float)):
+        regular = _fmt_price(pd)
+    else:
+        # Try flat fields on the item itself
+        regular = _fmt_price(
+            item.get("regularPrice") or item.get("listPrice") or
+            item.get("basePrice") or item.get("normalPrice") or ""
+        )
+        promo = _fmt_price(
+            item.get("salePrice") or item.get("promoPrice") or
+            item.get("discountedPrice") or ""
+        )
+
+    return {
+        "Product Name":   name,
+        "Product Number": pnum,
+        "Regular Price":  regular,
+        "Promo Price":    promo,
+    }
+
+
+def fetch_all_via_api(page, first_url, first_data, products_key):
+    """
+    Given the first API response, paginate through all remaining pages
+    by modifying the skip/offset parameter and using page.request.get().
+    Returns a list of parsed product dicts.
+    """
+    raw = list(first_data[products_key])
+    page_size = len(raw)
+    if page_size == 0:
+        return []
+
+    # Try to get total count
+    total = None
+    for tk in ("totalCount", "total", "totalItems", "count", "numFound",
+               "totalResults", "itemCount", "recordCount"):
+        if tk in first_data and isinstance(first_data[tk], int):
+            total = first_data[tk]
+            break
+
+    p(f"    API: {page_size} items on first call, total={total}")
+
+    if not total or total <= page_size:
+        results = [r for r in (_parse_api_item(i) for i in raw) if r]
+        return results
+
+    parsed = urlparse(first_url)
+    params = {k: v[0] if len(v) == 1 else v
+              for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
+
+    # Detect which parameter controls offset
+    skip_key = None
+    for sk in ("skip", "Skip", "offset", "Offset", "start", "from"):
+        if sk in params:
+            skip_key = sk
+            break
+    if not skip_key:
+        skip_key = "skip"
+
+    page_key = None
+    for pk in ("page", "Page", "pageNumber", "pageNum", "currentPage"):
+        if pk in params:
+            page_key = pk
+            break
+
+    skip = page_size
+    page_n = 2
+    consecutive_empty = 0
+
+    while skip < total and consecutive_empty < 3:
+        params[skip_key] = str(skip)
+        if page_key:
+            params[page_key] = str(page_n)
+
+        new_url = urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
+        try:
+            resp = page.request.get(new_url, timeout=20000)
+            data = resp.json()
+            items = data.get(products_key, [])
+            if not items:
+                consecutive_empty += 1
+                skip += page_size
+                page_n += 1
+                continue
+            consecutive_empty = 0
+            raw.extend(items)
+            skip += len(items)
+            page_n += 1
+            p(f"    API page {page_n - 1}: +{len(items)} items  "
+              f"(collected: {len(raw)}/{total})")
+        except Exception as e:
+            p(f"    API page error at skip={skip}: {e}")
+            consecutive_empty += 1
+            skip += page_size
+            page_n += 1
+
+    results = [r for r in (_parse_api_item(i) for i in raw) if r]
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────
+#  STEP 6: DOM fallback — incremental scroll extraction
+# ─────────────────────────────────────────────────────────────────
+def extract_dom_incremental(page, max_stall=10):
+    """
+    Scroll in small steps and extract product cards at each position.
+    Works for both virtual lists (react-window) and regular infinite scroll.
+    Deduplicates by product number so no item is counted twice.
+    """
+    seen = {}
+
+    try:
+        page.wait_for_selector(CARD_SEL, timeout=15000)
+    except Exception:
+        return []
+
+    time.sleep(1)
+
+    scroll_pos = 0
+    step = 400          # pixels per scroll tick
+    stall = 0
+    last_height = 0
+
+    while stall < max_stall:
+        prev = len(seen)
+
+        for card in page.query_selector_all(CARD_SEL):
+            try:
+                raw_id = card.get_attribute("data-testid") or ""
+                pnum   = raw_id.replace("ProductCardWrapper-", "").lstrip("0") or raw_id
+                if not pnum or pnum in seen:
+                    continue
+
+                ne = card.query_selector(NAME_SEL)
+                if not ne:
+                    continue
+                name = ne.inner_text().strip()
+                name = name.replace("Open Product Description", "").strip()
+                name = UNIT_RE.sub("", name).strip()
+
+                pe  = card.query_selector(PRICE_SEL)
+                we  = card.query_selector(WAS_SEL)
+                cur = pe.inner_text().strip() if pe else ""
+                was_raw = we.inner_text().strip() if we else ""
+                was = re.sub(r"^was\s*", "", was_raw, flags=re.IGNORECASE).strip()
+
+                seen[pnum] = {
+                    "Product Name":   name,
+                    "Product Number": pnum,
+                    "Regular Price":  was if was else cur,
+                    "Promo Price":    cur if was else "",
+                }
+            except Exception:
+                continue
+
+        stall = 0 if len(seen) > prev else stall + 1
+
+        scroll_pos += step
+        page.evaluate(f"window.scrollTo(0, {scroll_pos})")
+        time.sleep(0.6)
+
+        cur_height = page.evaluate("document.body.scrollHeight")
+        if scroll_pos >= cur_height and cur_height == last_height:
+            # Reached the true bottom — do one final extraction pass
+            for card in page.query_selector_all(CARD_SEL):
+                try:
+                    raw_id = card.get_attribute("data-testid") or ""
+                    pnum   = raw_id.replace("ProductCardWrapper-", "").lstrip("0") or raw_id
+                    if not pnum or pnum in seen:
+                        continue
+                    ne = card.query_selector(NAME_SEL)
+                    if not ne:
+                        continue
+                    name = ne.inner_text().strip()
+                    name = name.replace("Open Product Description", "").strip()
+                    name = UNIT_RE.sub("", name).strip()
+                    pe  = card.query_selector(PRICE_SEL)
+                    we  = card.query_selector(WAS_SEL)
+                    cur = pe.inner_text().strip() if pe else ""
+                    was_raw = we.inner_text().strip() if we else ""
+                    was = re.sub(r"^was\s*", "", was_raw, flags=re.IGNORECASE).strip()
+                    seen[pnum] = {
+                        "Product Name":   name,
+                        "Product Number": pnum,
+                        "Regular Price":  was if was else cur,
+                        "Promo Price":    cur if was else "",
+                    }
+                except Exception:
+                    continue
+            break
+        last_height = cur_height
+
+    return list(seen.values())
+
+
+# ─────────────────────────────────────────────────────────────────
+#  STEP 7: Fresh St. Market scraper
 # ─────────────────────────────────────────────────────────────────
 def scrape_fresh_st(playwright):
     p("=" * 60)
@@ -282,54 +458,106 @@ def scrape_fresh_st(playwright):
 
     browser, ctx = make_browser(playwright)
     page = ctx.new_page()
-    seen = {}
+    all_products = {}   # pnum -> product dict
 
     for cat_i, (cat_slug, cat_name) in enumerate(FRESH_ST_CATEGORIES, 1):
         p(f"\n  [{cat_i}/{len(FRESH_ST_CATEGORIES)}] {cat_name}")
-        page_num = 1
-        cat_new  = 0
 
-        while True:
-            skip = (page_num - 1) * 30
-            url  = f"{FRESH_ST_BASE}/categories/{cat_slug}?page={page_num}&skip={skip}"
+        # ── Set up API response interception ──────────────────────
+        intercepted = []   # will hold (url, data, products_key) once found
 
+        def on_response(resp, _intercepted=intercepted):
+            if _intercepted:           # already found one, stop looking
+                return
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                time.sleep(2.5)
-            except Exception as e:
-                p(f"    [!] Load error on page {page_num}: {e}")
-                break
+                if resp.status != 200:
+                    return
+                if "json" not in resp.headers.get("content-type", ""):
+                    return
+                data = resp.json()
+                if not isinstance(data, dict):
+                    return
+                for key in ("products", "items", "data", "results", "records", "catalogItems"):
+                    val = data.get(key)
+                    if _looks_like_products(val):
+                        _intercepted.append((resp.url, data, key))
+                        return
+            except Exception:
+                pass
 
-            products = extract_products(page)
-            if not products:
-                break
+        page.on("response", on_response)
 
-            for pr in products:
-                pn = pr["Product Number"]
-                if pn not in seen:
-                    seen[pn] = pr
-                    cat_new += 1
-                else:
-                    if pr["Promo Price"] and not seen[pn]["Promo Price"]:
-                        seen[pn]["Promo Price"]   = pr["Promo Price"]
-                        seen[pn]["Regular Price"] = pr["Regular Price"]
+        url = f"{FRESH_ST_BASE}/categories/{cat_slug}"
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=35000)
+            time.sleep(3.5)
+        except Exception as e:
+            p(f"    [!] Load error: {e}")
+            page.remove_listener("response", on_response)
+            continue
 
-            p(f"    Page {page_num}: {len(products):>3} items  "
-              f"(running total: {len(seen)})", flush=True)
+        # Scroll once to trigger any lazy API calls
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(2)
+        page.evaluate("window.scrollTo(0, 0)")
+        time.sleep(1)
 
-            if not has_next_page(page, page_num):
-                break
-            page_num += 1
+        page.remove_listener("response", on_response)
 
-        p(f"    Done: {cat_new} new products  (total so far: {len(seen)})")
+        # ── Choose extraction method ──────────────────────────────
+        if intercepted:
+            first_url, first_data, products_key = intercepted[0]
+            p(f"    Using API (intercepted from {first_url[:80]}...)")
+            cat_prods = fetch_all_via_api(page, first_url, first_data, products_key)
+        else:
+            p("    API not intercepted — using DOM scroll fallback")
+            cat_prods = extract_dom_incremental(page)
+
+            # DOM fallback: also try URL pagination (skip by 30)
+            if cat_prods:
+                page_num = 2
+                consecutive_empty = 0
+                while consecutive_empty < 2:
+                    skip = (page_num - 1) * 30
+                    paged_url = f"{FRESH_ST_BASE}/categories/{cat_slug}?page={page_num}&skip={skip}"
+                    try:
+                        page.goto(paged_url, wait_until="domcontentloaded", timeout=30000)
+                        time.sleep(2.5)
+                    except Exception:
+                        break
+                    extra = extract_dom_incremental(page)
+                    known_pnums = {pr["Product Number"] for pr in cat_prods}
+                    new_extra = [pr for pr in extra if pr["Product Number"] not in known_pnums]
+                    if not new_extra:
+                        consecutive_empty += 1
+                    else:
+                        consecutive_empty = 0
+                        cat_prods.extend(new_extra)
+                        p(f"    DOM page {page_num}: +{len(new_extra)} items  "
+                          f"(cat total: {len(cat_prods)})")
+                    page_num += 1
+
+        # ── Merge into global dict ────────────────────────────────
+        cat_new = 0
+        for pr in cat_prods:
+            pn = pr["Product Number"]
+            if pn not in all_products:
+                all_products[pn] = pr
+                cat_new += 1
+            elif pr.get("Promo Price") and not all_products[pn].get("Promo Price"):
+                all_products[pn]["Promo Price"]   = pr["Promo Price"]
+                all_products[pn]["Regular Price"]  = pr["Regular Price"]
+
+        p(f"    Done: {cat_new} new  |  {len(cat_prods)} from this category  "
+          f"|  running total: {len(all_products)}")
 
     browser.close()
-    p(f"\n  Fresh St. finished. {len(seen)} unique products.\n")
-    return list(seen.values())
+    p(f"\n  Fresh St. finished. {len(all_products)} unique products.\n")
+    return list(all_products.values())
 
 
 # ─────────────────────────────────────────────────────────────────
-#  STEP 6: Save On Foods scraper
+#  STEP 8: Save On Foods scraper
 # ─────────────────────────────────────────────────────────────────
 SAVE_ON_DEPTS = [
     ("Bakery",          "/store/browse/Bakery/_/N-1b6s"),
@@ -399,9 +627,10 @@ def scrape_save_on(playwright):
         browser.close()
         return []
 
-    if "blocked" in page.content().lower() or "ray id" in page.content().lower():
+    content = page.content().lower()
+    if "blocked" in content or "ray id" in content or "cloudflare" in content:
         p("  [!] Save On Foods is blocking automated access.")
-        p("      Their Cloudflare settings prevent scraping from any tool.")
+        p("      Their Cloudflare protection prevents scraping.")
         browser.close()
         return []
 
@@ -434,8 +663,7 @@ def scrape_save_on(playwright):
                 if key and key not in all_products:
                     all_products[key] = pr
 
-            p(f"    Page {page_num}: {len(products)} items  "
-              f"(total: {len(all_products)})")
+            p(f"    Page {page_num}: {len(products)} items  (total: {len(all_products)})")
 
             if len(products) < 48:
                 break
@@ -449,7 +677,7 @@ def scrape_save_on(playwright):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  STEP 7: Excel builder
+#  STEP 9: Excel builder
 # ─────────────────────────────────────────────────────────────────
 def build_excel(products, filepath, store_name):
     wb = openpyxl.Workbook()
@@ -522,13 +750,16 @@ def build_excel(products, filepath, store_name):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  STEP 8: Main
+#  STEP 10: Main
 # ─────────────────────────────────────────────────────────────────
 def main():
     start = time.time()
     p(f"  Output folder: {OUTPUT_DIR}")
     p(f"  Started at:    {datetime.now().strftime('%I:%M %p')}")
     p()
+
+    fresh = []
+    save_on = []
 
     try:
         with sync_playwright() as pw:
@@ -562,15 +793,18 @@ def main():
     p("=" * 60)
     p("  ALL DONE!")
     p("=" * 60)
-    if "fresh" in dir() and fresh:
+    if fresh:
         p(f"  Fresh St. Market : {len(fresh):>6,} products  ->  Excel saved")
-    if "save_on" in dir() and save_on:
+    if save_on:
         p(f"  Save On Foods    : {len(save_on):>6,} products  ->  Excel saved")
     p(f"  Time taken       : {mins}m {secs}s")
     p(f"  Files saved to   : {OUTPUT_DIR}")
     p()
 
-    input("  Press ENTER to close this window...")
+    try:
+        input("  Press ENTER to close this window...")
+    except EOFError:
+        pass
 
 
 if __name__ == "__main__":
