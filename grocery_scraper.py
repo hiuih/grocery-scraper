@@ -117,163 +117,40 @@ FRESH_ST_FILE = os.path.join(OUTPUT_DIR, "Fresh_St_Market_Products.xlsx")
 SAVE_ON_FILE  = os.path.join(OUTPUT_DIR, "Save_On_Foods_Products.xlsx")
 
 # ─────────────────────────────────────────────────────────────────
-#  Fresh St. Market — categories
-#  Parent categories + all named subcategories discovered from the
-#  site nav (236 total).  We scrape every leaf that has products.
+#  Fresh St. Market — top-level categories only.
+#  Subcategories are discovered dynamically at runtime by visiting
+#  each parent category page and following "View all" tile links.
+#  This avoids hardcoded IDs that go stale when the store updates.
 # ─────────────────────────────────────────────────────────────────
 FRESH_ST_BASE = "https://www.freshstmarket.com/sm/pickup/rsid/055"
 
-FRESH_ST_CATEGORIES = [
-    # ── Deli & Prepared Foods ──────────────────────────────────
-    ("deli-prepared-foods-id-3568",             "Deli & Prepared Foods"),
-    ("deli-prepared-foods/deli-meats-id-3569",  "Deli & Prepared Foods / Deli Meats"),
-    ("deli-prepared-foods/deli-cheese-id-3570", "Deli & Prepared Foods / Deli Cheese"),
-    # ── Baby ──────────────────────────────────────────────────
-    ("baby-id-3571",                            "Baby"),
-    ("baby/baby-food-id-3572",                  "Baby / Baby Food"),
-    ("baby/baby-care-id-3573",                  "Baby / Baby Care"),
-    ("baby/diapers-training-pants-id-3574",     "Baby / Diapers"),
-    ("baby/formula-id-3575",                    "Baby / Formula"),
-    # ── Personal Care ─────────────────────────────────────────
-    ("personal-care-items-id-3605",             "Personal Care"),
-    ("personal-care-items/hair-care-id-3606",   "Personal Care / Hair Care"),
-    ("personal-care-items/skin-care-id-3607",   "Personal Care / Skin Care"),
-    ("personal-care-items/oral-care-id-3608",   "Personal Care / Oral Care"),
-    ("personal-care-items/feminine-care-id-3609","Personal Care / Feminine Care"),
-    ("personal-care-items/mens-grooming-id-3610","Personal Care / Men's Grooming"),
-    # ── Dairy, Eggs & Cheese ──────────────────────────────────
-    ("dairy-eggs-cheese-id-3622",               "Dairy, Eggs & Cheese"),
-    ("dairy-eggs-cheese/cheese-id-3623",        "Dairy / Cheese"),
-    ("dairy-eggs-cheese/butter-margarine-id-3624","Dairy / Butter & Margarine"),
-    ("dairy-eggs-cheese/eggs-id-3625",          "Dairy / Eggs"),
-    ("dairy-eggs-cheese/yogurt-id-3626",        "Dairy / Yogurt"),
-    ("dairy-eggs-cheese/milk-id-3627",          "Dairy / Milk"),
-    ("dairy-eggs-cheese/cream-creamers-id-3628","Dairy / Cream & Creamers"),
-    ("dairy-eggs-cheese/sour-cream-dips-id-3629","Dairy / Sour Cream & Dips"),
-    # ── Condiments & Sauces ───────────────────────────────────
-    ("condiments-sauces-id-3657",               "Condiments & Sauces"),
-    ("condiments-sauces/ketchup-mustard-relish-id-3630","Condiments / Ketchup & Mustard"),
-    ("condiments-sauces/salad-dressing-id-3631","Condiments / Salad Dressing"),
-    ("condiments-sauces/cooking-sauces-id-3632","Condiments / Cooking Sauces"),
-    ("condiments-sauces/pickles-olives-id-3633","Condiments / Pickles & Olives"),
-    ("condiments-sauces/oils-vinegars-id-3634", "Condiments / Oils & Vinegars"),
-    ("condiments-sauces/mayo-id-3635",          "Condiments / Mayo"),
-    ("condiments-sauces/soy-sauce-asian-id-3636","Condiments / Soy & Asian Sauces"),
-    ("condiments-sauces/hot-sauce-id-3637",     "Condiments / Hot Sauce"),
-    ("condiments-sauces/bbq-sauce-id-3638",     "Condiments / BBQ Sauce"),
-    # ── Crackers & Cookies ────────────────────────────────────
-    ("crackers-cookies-id-3659",                "Crackers & Cookies"),
-    ("crackers-cookies/crackers-id-3660",       "Crackers & Cookies / Crackers"),
-    ("crackers-cookies/cookies-id-3661",        "Crackers & Cookies / Cookies"),
-    # ── Grains, Pasta & Sides ─────────────────────────────────
-    ("grains-pasta-sides-id-3664",              "Grains, Pasta & Sides"),
-    ("grains-pasta-sides/pasta-id-3665",        "Grains / Pasta"),
-    ("grains-pasta-sides/rice-id-3666",         "Grains / Rice"),
-    ("grains-pasta-sides/bread-crumbs-id-3667", "Grains / Bread Crumbs"),
-    ("grains-pasta-sides/stuffing-id-3668",     "Grains / Stuffing"),
-    ("grains-pasta-sides/soup-id-3669",         "Grains / Soup"),
-    # ── International ─────────────────────────────────────────
-    ("international-id-3671",                   "International"),
-    ("international/asian-id-3672",             "International / Asian"),
-    # ── Bakery ────────────────────────────────────────────────
-    ("bakery-id-3673",                          "Bakery"),
-    ("bakery/bread-id-3674",                    "Bakery / Bread"),
-    # ── Bulk ──────────────────────────────────────────────────
-    ("bulk-id-3675",                            "Bulk"),
-    ("bulk/bulk-nuts-seeds-id-3676",            "Bulk / Nuts & Seeds"),
-    ("bulk/bulk-grains-id-3677",                "Bulk / Grains"),
-    ("bulk/bulk-dried-fruit-id-3678",           "Bulk / Dried Fruit"),
-    ("bulk/bulk-candy-id-3679",                 "Bulk / Candy"),
-    ("bulk/bulk-baking-id-3680",                "Bulk / Baking"),
-    # ── Beverages ─────────────────────────────────────────────
-    ("beverages-id-3691",                       "Beverages"),
-    ("beverages/coffee-id-3692",                "Beverages / Coffee"),
-    ("beverages/tea-id-3693",                   "Beverages / Tea"),
-    ("beverages/juices-id-3639",                "Beverages / Juices"),
-    ("beverages/kombucha-id-3640",              "Beverages / Kombucha"),
-    ("beverages/meal-replacement-id-3641",      "Beverages / Meal Replacement"),
-    ("beverages/milk-substitutes-id-3642",      "Beverages / Milk Substitutes"),
-    ("beverages/drink-mixes-crystals-id-3695",  "Beverages / Drink Mixes"),
-    ("beverages/soda-pop-sport-energy-drinks-id-3698","Beverages / Soda & Energy"),
-    ("beverages/nonalcoholic-id-3750",          "Beverages / Non-Alcoholic"),
-    ("beverages/water-id-3751",                 "Beverages / Water"),
-    # ── Frozen Food ───────────────────────────────────────────
-    ("frozen-food-id-3708",                     "Frozen Food"),
-    ("frozen-food/frozen-meals-id-3709",        "Frozen / Meals"),
-    ("frozen-food/frozen-pizza-id-3710",        "Frozen / Pizza"),
-    ("frozen-food/frozen-vegetables-id-3711",   "Frozen / Vegetables"),
-    ("frozen-food/frozen-fruit-id-3712",        "Frozen / Fruit"),
-    ("frozen-food/frozen-desserts-id-3713",     "Frozen / Desserts"),
-    ("frozen-food/ice-cream-id-3714",           "Frozen / Ice Cream"),
-    ("frozen-food/frozen-breakfast-id-3715",    "Frozen / Breakfast"),
-    ("frozen-food/frozen-meat-seafood-id-3716", "Frozen / Meat & Seafood"),
-    # ── Household Goods ───────────────────────────────────────
-    ("household-goods-id-3717",                 "Household Goods"),
-    ("household-goods/cleaning-supplies-id-3718","Household / Cleaning"),
-    ("household-goods/paper-products-id-3719",  "Household / Paper Products"),
-    ("household-goods/laundry-id-3720",         "Household / Laundry"),
-    ("household-goods/dish-care-id-3721",       "Household / Dish Care"),
-    ("household-goods/bags-wrap-id-3722",       "Household / Bags & Wrap"),
-    ("household-goods/kitchen-items-id-3723",   "Household / Kitchen"),
-    # ── Breakfast & Cereals ───────────────────────────────────
-    ("breakfast-cereals-id-3752",               "Breakfast & Cereals"),
-    ("breakfast-cereals/cereal-id-3753",        "Breakfast / Cereal"),
-    ("breakfast-cereals/oatmeal-hot-cereal-id-3754","Breakfast / Oatmeal"),
-    ("breakfast-cereals/granola-bars-id-3755",  "Breakfast / Granola & Bars"),
-    # ── Canned Goods ──────────────────────────────────────────
-    ("canned-goods-id-3756",                    "Canned Goods"),
-    ("canned-goods/canned-vegetables-id-3757",  "Canned / Vegetables"),
-    ("canned-goods/canned-fruit-id-3758",       "Canned / Fruit"),
-    ("canned-goods/canned-fish-id-3759",        "Canned / Fish"),
-    ("canned-goods/canned-beans-id-3760",       "Canned / Beans"),
-    ("canned-goods/canned-tomatoes-id-3761",    "Canned / Tomatoes"),
-    ("canned-goods/canned-meat-id-3762",        "Canned / Meat"),
-    # ── Snacks & Candy ────────────────────────────────────────
-    ("snacks-candy-id-3777",                    "Snacks & Candy"),
-    ("snacks-candy/chips-id-3778",              "Snacks / Chips"),
-    ("snacks-candy/candy-id-3779",              "Snacks / Candy"),
-    ("snacks-candy/chocolate-id-3780",          "Snacks / Chocolate"),
-    ("snacks-candy/popcorn-id-3781",            "Snacks / Popcorn"),
-    ("snacks-candy/nuts-seeds-id-3782",         "Snacks / Nuts & Seeds"),
-    ("snacks-candy/dried-fruit-id-3783",        "Snacks / Dried Fruit"),
-    ("snacks-candy/snack-bars-id-3784",         "Snacks / Snack Bars"),
-    ("snacks-candy/rice-cakes-id-3785",         "Snacks / Rice Cakes"),
-    # ── Pet Care ──────────────────────────────────────────────
-    ("pet-care-id-3788",                        "Pet Care"),
-    ("pet-care/dog-food-id-3789",               "Pet Care / Dog Food"),
-    ("pet-care/cat-food-id-3790",               "Pet Care / Cat Food"),
-    ("pet-care/pet-treats-id-3791",             "Pet Care / Pet Treats"),
-    ("pet-care/pet-supplies-id-3792",           "Pet Care / Pet Supplies"),
-    # ── Wellness ──────────────────────────────────────────────
-    ("wellness-products-id-3795",               "Wellness"),
-    ("wellness-products/vitamins-id-3793",      "Wellness / Vitamins"),
-    ("wellness-products/supplements-id-3794",   "Wellness / Supplements"),
-    # ── Meat ──────────────────────────────────────────────────
-    ("meat-id-3796",                            "Meat"),
-    ("meat/beef-id-3797",                       "Meat / Beef"),
-    ("meat/pork-id-3798",                       "Meat / Pork"),
-    ("meat/chicken-id-3799",                    "Meat / Chicken"),
-    ("meat/turkey-id-3800",                     "Meat / Turkey"),
-    ("meat/lamb-id-3801",                       "Meat / Lamb"),
-    ("meat/sausages-id-3802",                   "Meat / Sausages"),
-    # ── Produce ───────────────────────────────────────────────
-    ("produce-id-3803",                         "Produce"),
-    ("produce/vegetables-id-3807",              "Produce / Vegetables"),
-    ("produce/fruit-id-3808",                   "Produce / Fruit"),
-    ("produce/herbs-id-3809",                   "Produce / Herbs"),
-    ("produce/salads-id-3810",                  "Produce / Salads"),
-    ("produce/organic-produce-id-3811",         "Produce / Organic"),
-    # ── Seafood ───────────────────────────────────────────────
-    ("seafood-id-3804",                         "Seafood"),
-    ("seafood/fresh-seafood-id-3812",           "Seafood / Fresh"),
-    ("seafood/frozen-seafood-id-3813",          "Seafood / Frozen"),
-    # ── Spices & Baking ───────────────────────────────────────
-    ("spices-baking-id-3806",                   "Spices & Baking"),
-    ("spices-baking/spices-id-3814",            "Spices / Spices"),
-    ("spices-baking/baking-id-3815",            "Spices / Baking"),
-    ("spices-baking/flour-id-3816",             "Spices / Flour"),
-    ("spices-baking/sugar-id-3817",             "Spices / Sugar"),
+FRESH_ST_TOP_CATS = [
+    ("deli-prepared-foods-id-3568",    "Deli & Prepared Foods"),
+    ("baby-id-3571",                   "Baby"),
+    ("personal-care-items-id-3605",    "Personal Care"),
+    ("dairy-eggs-cheese-id-3622",      "Dairy, Eggs & Cheese"),
+    ("condiments-sauces-id-3657",      "Condiments & Sauces"),
+    ("crackers-cookies-id-3659",       "Crackers & Cookies"),
+    ("grains-pasta-sides-id-3664",     "Grains, Pasta & Sides"),
+    ("international-id-3671",          "International"),
+    ("bakery-id-3673",                 "Bakery"),
+    ("bulk-id-3675",                   "Bulk"),
+    ("beverages-id-3691",              "Beverages"),
+    ("frozen-food-id-3708",            "Frozen Food"),
+    ("household-goods-id-3717",        "Household Goods"),
+    ("breakfast-cereals-id-3752",      "Breakfast & Cereals"),
+    ("canned-goods-id-3756",           "Canned Goods"),
+    ("snacks-candy-id-3777",           "Snacks & Candy"),
+    ("pet-care-id-3788",               "Pet Care"),
+    ("wellness-products-id-3795",      "Wellness"),
+    ("meat-id-3796",                   "Meat"),
+    ("produce-id-3803",                "Produce"),
+    ("seafood-id-3804",                "Seafood"),
+    ("spices-baking-id-3806",          "Spices & Baking"),
 ]
+
+# Regex to identify category URLs (ends with -id-NNNN)
+_CAT_ID_RE = re.compile(r'/categories/[^?#\s]+-id-\d+', re.IGNORECASE)
 
 # ─────────────────────────────────────────────────────────────────
 #  Browser setup
@@ -299,6 +176,208 @@ def make_browser(playwright):
     )
     ctx.route("**/*.{mp4,mp3,avi,wmv}", lambda r: r.abort())
     return browser, ctx
+
+
+def make_stealth_browser(playwright):
+    """
+    Launch a visible (non-headless) browser with anti-bot measures.
+    Used for Cloudflare-protected sites like Save On Foods.
+    """
+    launch_kwargs = dict(
+        headless=False,
+        args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
+    )
+    try:
+        browser = playwright.chromium.launch(channel="chrome", **launch_kwargs)
+    except Exception:
+        browser = playwright.chromium.launch(**launch_kwargs)
+
+    ctx = browser.new_context(
+        user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"),
+        viewport={"width": 1366, "height": 768},
+        locale="en-CA",
+        timezone_id="America/Vancouver",
+    )
+    # Remove automation fingerprints
+    ctx.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins',   { get: () => [
+            { name: 'Chrome PDF Plugin' },
+            { name: 'Chrome PDF Viewer' },
+            { name: 'Native Client' }
+        ]});
+        window.chrome = { runtime: {} };
+    """)
+    ctx.route("**/*.{mp4,mp3,avi,wmv}", lambda r: r.abort())
+    return browser, ctx
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Fresh St. — dynamic subcategory discovery helpers
+# ─────────────────────────────────────────────────────────────────
+def _find_subcat_tiles(page):
+    """
+    On a Fresh St. parent-category page, find subcategory tile links.
+    Tiles carry "View all" link text, which distinguishes them from
+    the sidebar navigation links (which use the category name only).
+    Returns a list of (full_url, label) tuples.
+    """
+    results = []
+    seen    = set()
+    base_parsed = urlparse(FRESH_ST_BASE)
+
+    for link in page.query_selector_all("a[href]"):
+        try:
+            text = link.inner_text().strip()
+            href = link.get_attribute("href") or ""
+        except Exception:
+            continue
+
+        if "view all" not in text.lower():
+            continue
+        if not _CAT_ID_RE.search(href):
+            continue
+
+        # Resolve to absolute URL
+        if href.startswith("/"):
+            full_url = (f"{base_parsed.scheme}://{base_parsed.netloc}"
+                        + href.split("?")[0])
+        elif href.startswith("http"):
+            full_url = href.split("?")[0]
+        else:
+            continue
+
+        if full_url in seen:
+            continue
+        seen.add(full_url)
+
+        # Try to read the heading inside the same tile card
+        try:
+            label = link.evaluate("""
+                el => {
+                    let node = el.parentElement;
+                    for (let i = 0; i < 6; i++) {
+                        if (!node) break;
+                        const h = node.querySelector('h2,h3,h4,h5,h6');
+                        if (h && h !== el) return h.innerText.trim();
+                        node = node.parentElement;
+                    }
+                    return null;
+                }
+            """)
+        except Exception:
+            label = None
+
+        if not label:
+            slug  = href.rstrip("/").split("/")[-1].split("?")[0]
+            label = slug.split("-id-")[0].replace("-", " ").title()
+        else:
+            label = re.sub(r"\s*\(\d+\)\s*$", "", label).strip()
+
+        results.append((full_url, label))
+
+    return results
+
+
+def _scrape_category(page, url, cat_name, all_products, visited):
+    """
+    Visit a Fresh St. category URL.
+      • If the page has product cards (or an intercepted API response):
+        extract products and add to all_products.
+      • Otherwise: find subcategory tile links and recurse into each.
+    Uses a 'visited' set so no URL is fetched twice.
+    """
+    if url in visited:
+        return
+    visited.add(url)
+
+    p(f"\n  → {cat_name}")
+
+    # ── Set up API interception ────────────────────────────────
+    intercepted = []
+
+    def _on_resp(resp, _buf=intercepted):
+        if _buf:
+            return
+        try:
+            if resp.status != 200:
+                return
+            if "json" not in resp.headers.get("content-type", ""):
+                return
+            data = resp.json()
+            if not isinstance(data, dict):
+                return
+            for key in ("products", "items", "data", "results",
+                        "records", "catalogItems", "productList"):
+                val = data.get(key)
+                if _looks_like_products(val):
+                    _buf.append((resp.url, data, key))
+                    return
+        except Exception:
+            pass
+
+    page.on("response", _on_resp)
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=35000)
+        time.sleep(2.5)
+    except Exception as e:
+        p(f"    [!] Load error: {e}")
+        page.remove_listener("response", _on_resp)
+        return
+
+    # Scroll to trigger any lazy-load API calls
+    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+    time.sleep(1.5)
+    page.evaluate("window.scrollTo(0, 0)")
+    time.sleep(0.5)
+    page.remove_listener("response", _on_resp)
+
+    # ── Leaf or parent? ───────────────────────────────────────
+    has_cards = bool(page.query_selector_all(CARD_SEL))
+
+    if has_cards or intercepted:
+        # ── Leaf: extract products ─────────────────────────
+        if intercepted:
+            first_url, first_data, products_key = intercepted[0]
+            p("    API intercepted — paginating...")
+            cat_prods = fetch_all_via_api(
+                page, first_url, first_data, products_key, cat_name)
+        else:
+            p("    No API hit — using DOM scroll fallback")
+            cat_prods = extract_dom_incremental(page, cat_name)
+
+        cat_new = 0
+        for pr in cat_prods:
+            pn = pr["Product Number"]
+            if not pn:
+                continue
+            if pn not in all_products:
+                all_products[pn] = pr
+                cat_new += 1
+            elif pr.get("Promo Price") and not all_products[pn].get("Promo Price"):
+                all_products[pn]["Promo Price"]  = pr["Promo Price"]
+                all_products[pn]["Regular Price"] = pr["Regular Price"]
+
+        p(f"    +{cat_new} new  |  {len(cat_prods)} fetched  "
+          f"|  running total: {len(all_products)}")
+        return
+
+    # ── Parent: find subcategory tiles and recurse ────────────
+    subcats = _find_subcat_tiles(page)
+
+    if not subcats:
+        p(f"    [!] No products or subcategory tiles — skipping: {url}")
+        return
+
+    p(f"    {len(subcats)} subcategories found — drilling in...")
+    for subcat_url, subcat_label in subcats:
+        _scrape_category(
+            page, subcat_url,
+            f"{cat_name} / {subcat_label}",
+            all_products, visited,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -561,86 +640,25 @@ def extract_dom_incremental(page, category, max_stall=10):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  Fresh St. Market scraper
+#  Fresh St. Market scraper  (dynamic subcategory discovery)
 # ─────────────────────────────────────────────────────────────────
 def scrape_fresh_st(playwright):
     p("=" * 60)
-    p("  Scraping FRESH ST. MARKET")
+    p("  Scraping FRESH ST. MARKET  (dynamic category discovery)")
     p("=" * 60)
+    p("  Subcategories are discovered at runtime — no stale IDs.")
+    p()
 
     browser, ctx = make_browser(playwright)
-    page = ctx.new_page()
-    all_products = {}   # pnum -> dict
+    page         = ctx.new_page()
+    all_products = {}    # pnum -> dict
+    visited      = set() # track visited URLs to avoid duplicates
 
-    total_cats = len(FRESH_ST_CATEGORIES)
-    for cat_i, (cat_slug, cat_name) in enumerate(FRESH_ST_CATEGORIES, 1):
-        p(f"\n  [{cat_i}/{total_cats}] {cat_name}")
-
-        # ── Intercept ONE API response ────────────────────────
-        intercepted = []
-
-        def _on_resp(resp, _buf=intercepted):
-            if _buf:
-                return
-            try:
-                if resp.status != 200:
-                    return
-                if "json" not in resp.headers.get("content-type", ""):
-                    return
-                data = resp.json()
-                if not isinstance(data, dict):
-                    return
-                for key in ("products", "items", "data", "results",
-                            "records", "catalogItems", "productList"):
-                    val = data.get(key)
-                    if _looks_like_products(val):
-                        _buf.append((resp.url, data, key))
-                        return
-            except Exception:
-                pass
-
-        page.on("response", _on_resp)
-        url = f"{FRESH_ST_BASE}/categories/{cat_slug}"
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=35000)
-            time.sleep(3)
-        except Exception as e:
-            p(f"    [!] Load error: {e}")
-            page.remove_listener("response", _on_resp)
-            continue
-
-        # Scroll once to trigger lazy API calls
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(2)
-        page.evaluate("window.scrollTo(0, 0)")
-        time.sleep(0.5)
-        page.remove_listener("response", _on_resp)
-
-        # ── Extract ───────────────────────────────────────────
-        if intercepted:
-            first_url, first_data, products_key = intercepted[0]
-            p(f"    API intercepted — paginating...")
-            cat_prods = fetch_all_via_api(
-                page, first_url, first_data, products_key, cat_name)
-        else:
-            p("    No API found — using DOM scroll fallback")
-            cat_prods = extract_dom_incremental(page, cat_name)
-
-        # ── Merge (deduplicate by product number) ─────────────
-        cat_new = 0
-        for pr in cat_prods:
-            pn = pr["Product Number"]
-            if not pn:
-                continue
-            if pn not in all_products:
-                all_products[pn] = pr
-                cat_new += 1
-            elif pr.get("Promo Price") and not all_products[pn].get("Promo Price"):
-                all_products[pn]["Promo Price"]  = pr["Promo Price"]
-                all_products[pn]["Regular Price"] = pr["Regular Price"]
-
-        p(f"    +{cat_new} new  |  {len(cat_prods)} fetched  "
-          f"|  running total: {len(all_products)}")
+    total = len(FRESH_ST_TOP_CATS)
+    for i, (slug, name) in enumerate(FRESH_ST_TOP_CATS, 1):
+        url = f"{FRESH_ST_BASE}/categories/{slug}"
+        p(f"\n[{i}/{total}] {name}")
+        _scrape_category(page, url, name, all_products, visited)
 
     browser.close()
     p(f"\n  Fresh St. finished — {len(all_products):,} unique products.\n")
@@ -671,24 +689,33 @@ def scrape_save_on(playwright):
     p("=" * 60)
     p("  Scraping SAVE ON FOODS")
     p("=" * 60)
+    p("  Opening a real (visible) browser to bypass Cloudflare.")
+    p("  If a CAPTCHA or challenge appears, solve it and the")
+    p("  scraper will continue automatically.")
+    p()
 
-    browser, ctx = make_browser(playwright)
+    browser, ctx = make_stealth_browser(playwright)
     page = ctx.new_page()
 
+    # ── Land on homepage first to establish a clean session ───
     try:
-        page.goto(SAVE_ON_BASE, wait_until="domcontentloaded", timeout=20000)
+        page.goto(SAVE_ON_BASE, wait_until="domcontentloaded", timeout=30000)
+        # Give Cloudflare up to 8 s to auto-resolve its JS challenge
+        time.sleep(8)
     except Exception as e:
-        p(f"  [!] Could not connect: {e}")
+        p(f"  [!] Could not connect to Save On Foods: {e}")
         browser.close()
         return []
 
     content = page.content().lower()
-    if "blocked" in content or "ray id" in content or "cloudflare" in content:
-        p("  [!] Save On Foods is blocking automated access (Cloudflare).")
+    if "ray id" in content and "cloudflare" in content and "blocked" in content:
+        p("  [!] Cloudflare hard-blocked this IP.")
+        p("  [!] Try running the scraper from a different network,")
+        p("  [!] or wait a few hours and try again.")
         browser.close()
         return []
 
-    p("  Connected. Starting...\n")
+    p("  Connected to Save On Foods. Starting departments...\n")
     all_products = {}
 
     for dept_name, dept_path in SAVE_ON_DEPTS:
@@ -698,23 +725,28 @@ def scrape_save_on(playwright):
         while True:
             url = f"{SAVE_ON_BASE}{dept_path}?Nrpp=48&No={(page_num-1)*48}"
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=25000)
-                time.sleep(2)
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(3)   # extra wait for CF-protected pages
             except Exception as e:
-                p(f"    [!] Error: {e}")
+                p(f"    [!] Error loading page: {e}")
                 break
 
-            if "blocked" in page.content().lower():
-                p("    [!] Blocked.")
+            content_lc = page.content().lower()
+            if "ray id" in content_lc and "cloudflare" in content_lc:
+                p("    [!] Blocked on this department. Skipping.")
                 break
 
             try:
-                page.wait_for_selector("[data-product-id], .product-tile", timeout=12000)
+                page.wait_for_selector(
+                    "[data-product-id], .product-tile, [class*='ProductCard']",
+                    timeout=15000)
             except PWTimeout:
+                p(f"    No products found on page {page_num}.")
                 break
 
             cards = (page.query_selector_all("[data-product-id]") or
-                     page.query_selector_all(".product-tile") or [])
+                     page.query_selector_all(".product-tile") or
+                     page.query_selector_all("[class*='ProductCard']") or [])
             if not cards:
                 break
 
