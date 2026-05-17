@@ -248,10 +248,9 @@ def _wynshop_api_products(page, cat_id, cat_name):
     Fetch all products for a category from the Wynshop storefrontgateway API.
     Uses Playwright request (no CORS). Returns parsed list or [].
     """
+    # Only try the /groupby-style products path — /api/2.0/products returns 404
     endpoints = [
-        f"{WYNSHOP_GW}/api/stores/{WYNSHOP_STORE_ID}/categories/{cat_id}/products?take=9999&skip=0",
-        f"{WYNSHOP_GW}/api/2.0/products?storeId={WYNSHOP_STORE_ID}&take=9999&skip=0&departmentId={cat_id}",
-        f"{WYNSHOP_GW}/api/2.0/products?storeId={WYNSHOP_STORE_ID}&take=9999&skip=0&categoryId={cat_id}",
+        f"{WYNSHOP_GW}/api/stores/{WYNSHOP_STORE_ID}/categories/{cat_id}/products",
     ]
     for ep in endpoints:
         data = _pw_get(page, ep)
@@ -274,38 +273,33 @@ def _wynshop_api_products(page, cat_id, cat_name):
 
 def _wynshop_groupby_subcats(page, cat_id):
     """
-    Call /groupby to get subcategory IDs the DOM may not show.
-    Returns [(sub_id_str, sub_name), ...] across all pages.
+    Call /groupby (no pagination params — the API doesn't support them)
+    to get all subcategory groups the DOM may not show.
+    Returns [(sub_id_str, sub_name), ...].
     """
-    result, skip = [], 0
-    while True:
-        url = (f"{WYNSHOP_GW}/api/stores/{WYNSHOP_STORE_ID}"
-               f"/categories/{cat_id}/groupby?take=100&skip={skip}")
-        data = _pw_get(page, url)
-        if data.get("_error"):
-            p(f"      [GROUPBY-ERR] {data['_error']}")
-            break
-        items = data.get("items") or []
-        total = data.get("total") or 0
-        if not items:
-            if skip == 0:
-                p(f"      [GROUPBY] empty — keys: {list(data.keys())[:6]}")
-            break
-        if skip == 0:
-            first = items[0]
-            p(f"      [GROUPBY] {total} groups, item keys: {list(first.keys())[:8]}")
-            p(f"      [GROUPBY-ITEM1] {dict(list(first.items())[:5])}")
-        for item in items:
-            sid = (item.get("id") or item.get("categoryId") or
-                   item.get("departmentId") or item.get("groupId") or
-                   item.get("nodeId"))
-            if not sid:
-                continue
-            name = item.get("name") or item.get("title") or str(sid)
-            result.append((str(sid), name))
-        skip += len(items)
-        if not total or skip >= total:
-            break
+    url  = f"{WYNSHOP_GW}/api/stores/{WYNSHOP_STORE_ID}/categories/{cat_id}/groupby"
+    data = _pw_get(page, url)
+    if data.get("_error"):
+        p(f"      [GROUPBY-ERR] {data['_error']}")
+        return []
+    items = data.get("items") or []
+    total = data.get("total") or len(items)
+    if not items:
+        p(f"      [GROUPBY] empty — keys: {list(data.keys())[:6]}")
+        return []
+    first = items[0]
+    p(f"      [GROUPBY] {total} groups, item keys: {list(first.keys())[:10]}")
+    # Print full first item so we can see its structure
+    p(f"      [GROUPBY-ITEM1] { {k: str(v)[:60] for k, v in list(first.items())[:8]} }")
+    result = []
+    for item in items:
+        sid = (item.get("id") or item.get("categoryId") or
+               item.get("departmentId") or item.get("groupId") or
+               item.get("nodeId"))
+        if not sid:
+            continue
+        name = item.get("name") or item.get("title") or str(sid)
+        result.append((str(sid), name))
     return result
 
 
