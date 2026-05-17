@@ -228,11 +228,25 @@ def _extract_cat_id(url):
     return m.group(1) if m else None
 
 
+def _pw_get(page, url):
+    """
+    HTTP GET via Playwright's own request API — no CORS restrictions,
+    shares browser cookies automatically.
+    Returns parsed JSON dict/list, or {"_error": ...} on failure.
+    """
+    try:
+        resp = page.request.get(url, headers={"Accept": "application/json"})
+        if not resp.ok:
+            return {"_error": resp.status}
+        return resp.json()
+    except Exception as e:
+        return {"_error": str(e)}
+
+
 def _wynshop_api_products(page, cat_id, cat_name):
     """
-    Fetch all products for a category from the Wynshop API.
-    Tries /products endpoint first, then falls back to /2.0 variants.
-    Returns parsed product list, or [] if nothing found.
+    Fetch all products for a category from the Wynshop storefrontgateway API.
+    Uses Playwright request (no CORS). Returns parsed list or [].
     """
     endpoints = [
         f"{WYNSHOP_GW}/api/stores/{WYNSHOP_STORE_ID}/categories/{cat_id}/products?take=9999&skip=0",
@@ -240,32 +254,36 @@ def _wynshop_api_products(page, cat_id, cat_name):
         f"{WYNSHOP_GW}/api/2.0/products?storeId={WYNSHOP_STORE_ID}&take=9999&skip=0&categoryId={cat_id}",
     ]
     for ep in endpoints:
-        data = page_fetch(page, ep)
+        data = _pw_get(page, ep)
         if data.get("_error"):
+            p(f"      [API-ERR] {ep.split('?')[0][-50:]} → {data['_error']}")
             continue
         for key, val in data.items():
             if _looks_like_products(val):
+                p(f"      [API-HIT] {ep.split('?')[0][-50:]} key={key} n={len(val)}")
                 return fetch_all_via_api(page, ep, data, key, cat_name)
         for key, val in data.items():
             if isinstance(val, dict):
                 for ik, iv in val.items():
                     if _looks_like_products(iv):
+                        p(f"      [API-HIT-NESTED] key={key}.{ik}")
                         return fetch_all_via_api(page, ep, val, ik, cat_name)
-        p(f"      [API-KEYS] {ep.split('?')[0][-55:]} → {list(data.keys())[:6]}")
+        p(f"      [API-KEYS] {ep.split('?')[0][-50:]} → {list(data.keys())[:6]}")
     return []
 
 
 def _wynshop_groupby_subcats(page, cat_id):
     """
     Call /groupby to get subcategory IDs the DOM may not show.
-    Returns [(sub_id_str, sub_name), ...].
+    Returns [(sub_id_str, sub_name), ...] across all pages.
     """
     result, skip = [], 0
     while True:
         url = (f"{WYNSHOP_GW}/api/stores/{WYNSHOP_STORE_ID}"
                f"/categories/{cat_id}/groupby?take=100&skip={skip}")
-        data = page_fetch(page, url)
+        data = _pw_get(page, url)
         if data.get("_error"):
+            p(f"      [GROUPBY-ERR] {data['_error']}")
             break
         items = data.get("items") or []
         total = data.get("total") or 0
@@ -274,13 +292,14 @@ def _wynshop_groupby_subcats(page, cat_id):
                 p(f"      [GROUPBY] empty — keys: {list(data.keys())[:6]}")
             break
         if skip == 0:
-            p(f"      [GROUPBY] {total} groups, item keys: {list(items[0].keys())[:8]}")
+            first = items[0]
+            p(f"      [GROUPBY] {total} groups, item keys: {list(first.keys())[:8]}")
+            p(f"      [GROUPBY-ITEM1] {dict(list(first.items())[:5])}")
         for item in items:
             sid = (item.get("id") or item.get("categoryId") or
                    item.get("departmentId") or item.get("groupId") or
                    item.get("nodeId"))
             if not sid:
-                p(f"      [GROUPBY-ITEM] {dict(list(item.items())[:4])}")
                 continue
             name = item.get("name") or item.get("title") or str(sid)
             result.append((str(sid), name))
