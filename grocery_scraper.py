@@ -219,41 +219,26 @@ def make_stealth_browser(playwright):
 # ─────────────────────────────────────────────────────────────────
 def _find_subcat_tiles(page):
     """
-    On a Fresh St. parent-category page, find subcategory tile links.
-    Tiles carry "View all" link text, which distinguishes them from
-    the sidebar navigation links (which use the category name only).
+    Find subcategory links on a Fresh St. category page.
+    Primary pass  : "View all" tile links (the standard pattern).
+    Fallback pass : any category-ID link outside nav/header/footer chrome,
+                    catching sub-subcategory pages that list categories
+                    without "View all" tiles.
     Returns a list of (full_url, label) tuples.
     """
     results = []
     seen    = set()
     base_parsed = urlparse(FRESH_ST_BASE)
 
-    for link in page.query_selector_all("a[href]"):
-        try:
-            text = link.inner_text().strip()
-            href = link.get_attribute("href") or ""
-        except Exception:
-            continue
-
-        if "view all" not in text.lower():
-            continue
-        if not _CAT_ID_RE.search(href):
-            continue
-
-        # Resolve to absolute URL
+    def _resolve(href):
         if href.startswith("/"):
-            full_url = (f"{base_parsed.scheme}://{base_parsed.netloc}"
-                        + href.split("?")[0])
-        elif href.startswith("http"):
-            full_url = href.split("?")[0]
-        else:
-            continue
+            return (f"{base_parsed.scheme}://{base_parsed.netloc}"
+                    + href.split("?")[0])
+        if href.startswith("http"):
+            return href.split("?")[0]
+        return None
 
-        if full_url in seen:
-            continue
-        seen.add(full_url)
-
-        # Try to read the heading inside the same tile card
+    def _label_from_link(link, href):
         try:
             label = link.evaluate("""
                 el => {
@@ -269,13 +254,77 @@ def _find_subcat_tiles(page):
             """)
         except Exception:
             label = None
-
         if not label:
             slug  = href.rstrip("/").split("/")[-1].split("?")[0]
             label = slug.split("-id-")[0].replace("-", " ").title()
         else:
             label = re.sub(r"\s*\(\d+\)\s*$", "", label).strip()
+        return label
 
+    # ── Primary pass: "View all" tile links ──────────────────────
+    for link in page.query_selector_all("a[href]"):
+        try:
+            text = link.inner_text().strip()
+            href = link.get_attribute("href") or ""
+        except Exception:
+            continue
+
+        if "view all" not in text.lower():
+            continue
+        if not _CAT_ID_RE.search(href):
+            continue
+
+        full_url = _resolve(href)
+        if not full_url or full_url in seen:
+            continue
+        seen.add(full_url)
+        results.append((full_url, _label_from_link(link, href)))
+
+    if results:
+        return results
+
+    # ── Fallback pass: any category-ID link outside page chrome ──
+    # Triggered when sub-subcategory pages don't use "View all" tiles.
+    for link in page.query_selector_all("a[href]"):
+        try:
+            href = link.get_attribute("href") or ""
+            text = (link.inner_text() or "").strip()
+        except Exception:
+            continue
+
+        if not _CAT_ID_RE.search(href):
+            continue
+
+        try:
+            in_chrome = link.evaluate("""
+                el => {
+                    let n = el;
+                    while (n) {
+                        const tag = (n.tagName || '').toLowerCase();
+                        const cls = (n.className || '').toString().toLowerCase();
+                        if (['nav','header','footer'].includes(tag)) return true;
+                        if (cls.includes('breadcrumb') || cls.includes('sidebar') ||
+                            cls.includes('topbar')     || cls.includes('top-bar') ||
+                            cls.includes('globalheader') ||
+                            cls.includes('global-header')) return true;
+                        n = n.parentElement;
+                    }
+                    return false;
+                }
+            """)
+            if in_chrome:
+                continue
+        except Exception:
+            pass
+
+        full_url = _resolve(href)
+        if not full_url or full_url in seen:
+            continue
+        seen.add(full_url)
+
+        slug  = href.rstrip("/").split("/")[-1].split("?")[0]
+        label = text or slug.split("-id-")[0].replace("-", " ").title()
+        label = re.sub(r"\s*\(\d+\)\s*$", "", label).strip()
         results.append((full_url, label))
 
     return results
@@ -334,11 +383,10 @@ def _scrape_category(page, url, cat_name, all_products, visited):
     time.sleep(0.5)
     page.remove_listener("response", _on_resp)
 
-    # ── Leaf or parent? ───────────────────────────────────────
+    # ── Extract products if this page has any ────────────────
     has_cards = bool(page.query_selector_all(CARD_SEL))
 
     if has_cards or intercepted:
-        # ── Leaf: extract products ─────────────────────────
         if intercepted:
             first_url, first_data, products_key = intercepted[0]
             p("    API intercepted — paginating...")
@@ -362,22 +410,22 @@ def _scrape_category(page, url, cat_name, all_products, visited):
 
         p(f"    +{cat_new} new  |  {len(cat_prods)} fetched  "
           f"|  running total: {len(all_products)}")
-        return
 
-    # ── Parent: find subcategory tiles and recurse ────────────
+    # ── Always check for subcategories too ────────────────────
+    # Some pages show products AND have deeper subcategory tiles;
+    # the previous early return missed those sub-subcategories.
     subcats = _find_subcat_tiles(page)
 
-    if not subcats:
+    if subcats:
+        p(f"    {len(subcats)} subcategories found — drilling in...")
+        for subcat_url, subcat_label in subcats:
+            _scrape_category(
+                page, subcat_url,
+                f"{cat_name} / {subcat_label}",
+                all_products, visited,
+            )
+    elif not has_cards and not intercepted:
         p(f"    [!] No products or subcategory tiles — skipping: {url}")
-        return
-
-    p(f"    {len(subcats)} subcategories found — drilling in...")
-    for subcat_url, subcat_label in subcats:
-        _scrape_category(
-            page, subcat_url,
-            f"{cat_name} / {subcat_label}",
-            all_products, visited,
-        )
 
 
 # ─────────────────────────────────────────────────────────────────
