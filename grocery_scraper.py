@@ -215,6 +215,53 @@ def make_stealth_browser(playwright):
 
 
 # ─────────────────────────────────────────────────────────────────
+#  Wynshop direct API helpers
+# ─────────────────────────────────────────────────────────────────
+WYNSHOP_STORE_ID   = "055"
+WYNSHOP_GW_BASE    = "https://storefrontgateway.freshstmarket.com/api/2.0"
+WYNSHOP_API_PARAMS = [
+    ("departmentId", WYNSHOP_GW_BASE),
+    ("categoryId",   WYNSHOP_GW_BASE),
+]
+
+def _extract_cat_id(url):
+    m = re.search(r'-id-(\d+)', url)
+    return m.group(1) if m else None
+
+
+def _try_wynshop_api(page, url, cat_name):
+    """
+    Proactively call the Wynshop storefrontgateway API using the
+    category ID embedded in the Fresh St. URL.
+    Returns (api_url, data_dict, products_key) or None.
+    """
+    cat_id = _extract_cat_id(url)
+    if not cat_id:
+        return None
+
+    for param_name, base in WYNSHOP_API_PARAMS:
+        api_url = (f"{base}/products"
+                   f"?storeId={WYNSHOP_STORE_ID}"
+                   f"&take=9999&skip=0"
+                   f"&{param_name}={cat_id}")
+        data = page_fetch(page, api_url)
+        if data.get("_error"):
+            continue
+        # Scan all keys + one level of nesting
+        for key, val in data.items():
+            if _looks_like_products(val):
+                p(f"    Wynshop API ({param_name}={cat_id}) — {len(val)} items")
+                return (api_url, data, key)
+        for key, val in data.items():
+            if isinstance(val, dict):
+                for inner_key, inner_val in val.items():
+                    if _looks_like_products(inner_val):
+                        p(f"    Wynshop API nested ({param_name}={cat_id})")
+                        return (api_url, val, inner_key)
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────
 #  Fresh St. — dynamic subcategory discovery helpers
 # ─────────────────────────────────────────────────────────────────
 def _find_subcat_tiles(page):
@@ -353,21 +400,22 @@ def _scrape_category(page, url, cat_name, all_products, visited):
         try:
             if resp.status != 200:
                 return
-            if "json" not in resp.headers.get("content-type", ""):
+            ct = resp.headers.get("content-type", "")
+            if "json" not in ct:
                 return
             data = resp.json()
-            # Top-level response might itself be a product list
             if _looks_like_products(data):
                 _buf.append((resp.url, {"products": data}, "products"))
                 return
             if not isinstance(data, dict):
                 return
-            # Scan every top-level key — don't hardcode Wynshop key names
+            # Log every JSON API response so we can see what the page calls
+            if any(x in resp.url for x in ("api", "storefront", "product", "catalog", "search")):
+                p(f"      [NET] {resp.url.split('?')[0][-70:]} → {list(data.keys())[:5]}")
             for key, val in data.items():
                 if _looks_like_products(val):
                     _buf.append((resp.url, data, key))
                     return
-            # One level of nesting (e.g. {"data": {"products": [...]}})
             for key, val in data.items():
                 if isinstance(val, dict):
                     for inner_key, inner_val in val.items():
@@ -403,8 +451,15 @@ def _scrape_category(page, url, cat_name, all_products, visited):
             cat_prods = fetch_all_via_api(
                 page, first_url, first_data, products_key, cat_name)
         else:
-            p("    No API hit — using DOM scroll fallback")
-            cat_prods = extract_dom_incremental(page, cat_name)
+            # Try calling Wynshop API directly using the category ID in the URL
+            direct = _try_wynshop_api(page, url, cat_name)
+            if direct:
+                first_url, first_data, products_key = direct
+                cat_prods = fetch_all_via_api(
+                    page, first_url, first_data, products_key, cat_name)
+            else:
+                p("    No API hit — using DOM scroll fallback")
+                cat_prods = extract_dom_incremental(page, cat_name)
 
         cat_new = 0
         for pr in cat_prods:
@@ -448,8 +503,12 @@ def _looks_like_products(lst):
     if not isinstance(s, dict):
         return False
     keys_lc = {k.lower() for k in s.keys()}
-    return bool(keys_lc & {"sku", "upc", "name", "price", "productid",
-                            "displayname", "itemid", "wasprize", "waspricestring"})
+    return bool(keys_lc & {
+        "sku", "upc", "name", "price", "productid",
+        "displayname", "itemid", "wasprize", "waspricestring",
+        "title", "productname", "productsku", "barcode",
+        "regularprice", "currentprice", "listprice",
+    })
 
 
 def _fmt_price(v):
