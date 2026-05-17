@@ -356,14 +356,24 @@ def _scrape_category(page, url, cat_name, all_products, visited):
             if "json" not in resp.headers.get("content-type", ""):
                 return
             data = resp.json()
+            # Top-level response might itself be a product list
+            if _looks_like_products(data):
+                _buf.append((resp.url, {"products": data}, "products"))
+                return
             if not isinstance(data, dict):
                 return
-            for key in ("products", "items", "data", "results",
-                        "records", "catalogItems", "productList"):
-                val = data.get(key)
+            # Scan every top-level key — don't hardcode Wynshop key names
+            for key, val in data.items():
                 if _looks_like_products(val):
                     _buf.append((resp.url, data, key))
                     return
+            # One level of nesting (e.g. {"data": {"products": [...]}})
+            for key, val in data.items():
+                if isinstance(val, dict):
+                    for inner_key, inner_val in val.items():
+                        if _looks_like_products(inner_val):
+                            _buf.append((resp.url, val, inner_key))
+                            return
         except Exception:
             pass
 
