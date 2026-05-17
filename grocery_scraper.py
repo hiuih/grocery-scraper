@@ -216,49 +216,78 @@ def make_stealth_browser(playwright):
 
 # ─────────────────────────────────────────────────────────────────
 #  Wynshop direct API helpers
+#  Discovered endpoint: storefrontgateway.freshstmarket.com
+#    /api/stores/055/categories/{id}/products  → product list
+#    /api/stores/055/categories/{id}/groupby   → subcategory groups
 # ─────────────────────────────────────────────────────────────────
-WYNSHOP_STORE_ID   = "055"
-WYNSHOP_GW_BASE    = "https://storefrontgateway.freshstmarket.com/api/2.0"
-WYNSHOP_API_PARAMS = [
-    ("departmentId", WYNSHOP_GW_BASE),
-    ("categoryId",   WYNSHOP_GW_BASE),
-]
+WYNSHOP_STORE_ID = "055"
+WYNSHOP_GW       = "https://storefrontgateway.freshstmarket.com"
 
 def _extract_cat_id(url):
     m = re.search(r'-id-(\d+)', url)
     return m.group(1) if m else None
 
 
-def _try_wynshop_api(page, url, cat_name):
+def _wynshop_api_products(page, cat_id, cat_name):
     """
-    Proactively call the Wynshop storefrontgateway API using the
-    category ID embedded in the Fresh St. URL.
-    Returns (api_url, data_dict, products_key) or None.
+    Fetch all products for a category from the Wynshop API.
+    Tries /products endpoint first, then falls back to /2.0 variants.
+    Returns parsed product list, or [] if nothing found.
     """
-    cat_id = _extract_cat_id(url)
-    if not cat_id:
-        return None
-
-    for param_name, base in WYNSHOP_API_PARAMS:
-        api_url = (f"{base}/products"
-                   f"?storeId={WYNSHOP_STORE_ID}"
-                   f"&take=9999&skip=0"
-                   f"&{param_name}={cat_id}")
-        data = page_fetch(page, api_url)
+    endpoints = [
+        f"{WYNSHOP_GW}/api/stores/{WYNSHOP_STORE_ID}/categories/{cat_id}/products?take=9999&skip=0",
+        f"{WYNSHOP_GW}/api/2.0/products?storeId={WYNSHOP_STORE_ID}&take=9999&skip=0&departmentId={cat_id}",
+        f"{WYNSHOP_GW}/api/2.0/products?storeId={WYNSHOP_STORE_ID}&take=9999&skip=0&categoryId={cat_id}",
+    ]
+    for ep in endpoints:
+        data = page_fetch(page, ep)
         if data.get("_error"):
             continue
-        # Scan all keys + one level of nesting
         for key, val in data.items():
             if _looks_like_products(val):
-                p(f"    Wynshop API ({param_name}={cat_id}) — {len(val)} items")
-                return (api_url, data, key)
+                return fetch_all_via_api(page, ep, data, key, cat_name)
         for key, val in data.items():
             if isinstance(val, dict):
-                for inner_key, inner_val in val.items():
-                    if _looks_like_products(inner_val):
-                        p(f"    Wynshop API nested ({param_name}={cat_id})")
-                        return (api_url, val, inner_key)
-    return None
+                for ik, iv in val.items():
+                    if _looks_like_products(iv):
+                        return fetch_all_via_api(page, ep, val, ik, cat_name)
+        p(f"      [API-KEYS] {ep.split('?')[0][-55:]} → {list(data.keys())[:6]}")
+    return []
+
+
+def _wynshop_groupby_subcats(page, cat_id):
+    """
+    Call /groupby to get subcategory IDs the DOM may not show.
+    Returns [(sub_id_str, sub_name), ...].
+    """
+    result, skip = [], 0
+    while True:
+        url = (f"{WYNSHOP_GW}/api/stores/{WYNSHOP_STORE_ID}"
+               f"/categories/{cat_id}/groupby?take=100&skip={skip}")
+        data = page_fetch(page, url)
+        if data.get("_error"):
+            break
+        items = data.get("items") or []
+        total = data.get("total") or 0
+        if not items:
+            if skip == 0:
+                p(f"      [GROUPBY] empty — keys: {list(data.keys())[:6]}")
+            break
+        if skip == 0:
+            p(f"      [GROUPBY] {total} groups, item keys: {list(items[0].keys())[:8]}")
+        for item in items:
+            sid = (item.get("id") or item.get("categoryId") or
+                   item.get("departmentId") or item.get("groupId") or
+                   item.get("nodeId"))
+            if not sid:
+                p(f"      [GROUPBY-ITEM] {dict(list(item.items())[:4])}")
+                continue
+            name = item.get("name") or item.get("title") or str(sid)
+            result.append((str(sid), name))
+        skip += len(items)
+        if not total or skip >= total:
+            break
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -444,6 +473,8 @@ def _scrape_category(page, url, cat_name, all_products, visited):
     # ── Extract products if this page has any ────────────────
     has_cards = bool(page.query_selector_all(CARD_SEL))
 
+    cat_id = _extract_cat_id(url)
+
     if has_cards or intercepted:
         if intercepted:
             first_url, first_data, products_key = intercepted[0]
@@ -451,13 +482,10 @@ def _scrape_category(page, url, cat_name, all_products, visited):
             cat_prods = fetch_all_via_api(
                 page, first_url, first_data, products_key, cat_name)
         else:
-            # Try calling Wynshop API directly using the category ID in the URL
-            direct = _try_wynshop_api(page, url, cat_name)
-            if direct:
-                first_url, first_data, products_key = direct
-                cat_prods = fetch_all_via_api(
-                    page, first_url, first_data, products_key, cat_name)
-            else:
+            # Try Wynshop products API directly before falling back to DOM
+            cat_prods = (_wynshop_api_products(page, cat_id, cat_name)
+                         if cat_id else [])
+            if not cat_prods:
                 p("    No API hit — using DOM scroll fallback")
                 cat_prods = extract_dom_incremental(page, cat_name)
 
@@ -476,13 +504,37 @@ def _scrape_category(page, url, cat_name, all_products, visited):
         p(f"    +{cat_new} new  |  {len(cat_prods)} fetched  "
           f"|  running total: {len(all_products)}")
 
-    # ── Always check for subcategories too ────────────────────
-    # Some pages show products AND have deeper subcategory tiles;
-    # the previous early return missed those sub-subcategories.
+    # ── Subcategory discovery: DOM tiles + Wynshop groupby API ────
     subcats = _find_subcat_tiles(page)
 
+    # Also ask the groupby API — it may know subcategories not in the DOM
+    if cat_id:
+        api_subcats = _wynshop_groupby_subcats(page, cat_id)
+        dom_ids = {_extract_cat_id(u) for u, _ in subcats}
+        visited_api_ids = set()
+        for sid, sname in api_subcats:
+            if sid in dom_ids or sid in visited_api_ids:
+                continue
+            visited_api_ids.add(sid)
+            sub_label = f"{cat_name} / {sname}"
+            # Fake a "visited" URL so we never revisit this ID via DOM path
+            fake_url = f"{FRESH_ST_BASE}/categories/api-id-{sid}"
+            if fake_url in visited:
+                continue
+            visited.add(fake_url)
+            api_prods = _wynshop_api_products(page, sid, sub_label)
+            if api_prods:
+                new_count = 0
+                for pr in api_prods:
+                    pn = pr["Product Number"]
+                    if pn and pn not in all_products:
+                        all_products[pn] = pr
+                        new_count += 1
+                p(f"    [API-sub] {sname}: +{new_count} new ({len(api_prods)} fetched) "
+                  f"| total: {len(all_products)}")
+
     if subcats:
-        p(f"    {len(subcats)} subcategories found — drilling in...")
+        p(f"    {len(subcats)} DOM subcategories — drilling in...")
         for subcat_url, subcat_label in subcats:
             _scrape_category(
                 page, subcat_url,
