@@ -195,7 +195,7 @@ def make_browser(playwright, use_real_chrome=False):
         for attempt in range(6):
             try:
                 browser = playwright.chromium.connect_over_cdp(
-                    f"http://localhost:{CDP_PORT}", timeout=8000)
+                    f"http://127.0.0.1:{CDP_PORT}", timeout=8000)
                 ctx = (browser.contexts[0]
                        if browser.contexts
                        else browser.new_context(viewport={"width": 1280, "height": 900}))
