@@ -165,29 +165,51 @@ CHROME_USER_DATA = os.path.join(os.path.expanduser("~"),
                                 r"AppData\Local\Google\Chrome\User Data")
 
 
+def _port_open(host, port):
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1)
+        s.connect((host, port))
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
+def _wait_for_port(host, port, timeout=30):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _port_open(host, port):
+            return True
+        time.sleep(1)
+    return False
+
+
 def launch_chrome_cdp():
     """
     Launch Chrome with the user's REAL profile + remote debugging.
-    This carries existing Cloudflare cookies so Save On Foods works.
-    Chrome must be fully closed before calling this.
-    Returns (proc, None).
+    Returns (proc, None). Chrome must be fully closed beforehand.
     """
     import subprocess as sp
 
-    # Kill any lingering Chrome processes (background helpers etc.)
-    sp.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
-    time.sleep(2)
+    # Kill ALL lingering Chrome processes
+    for _ in range(3):
+        sp.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"],
+               capture_output=True)
+        time.sleep(1)
 
-    # Delete Chrome's profile lock files — if they exist Chrome thinks another
-    # instance owns the profile and exits without opening the debug port
+    # Delete Chrome profile lock files so it doesn't detect a "running" instance
     for lock_name in ["LOCK", "SingletonLock", "SingletonCookie", "SingletonSocket"]:
         lock_path = os.path.join(CHROME_USER_DATA, "Default", lock_name)
         try:
             if os.path.exists(lock_path):
                 os.remove(lock_path)
+                p(f"    Removed lock file: {lock_name}")
         except Exception:
             pass
 
+    p(f"    Launching Chrome from: {CHROME_EXE}")
     proc = sp.Popen([
         CHROME_EXE,
         f"--remote-debugging-port={CDP_PORT}",
@@ -198,7 +220,13 @@ def launch_chrome_cdp():
         "--window-size=1280,900",
         "about:blank",
     ])
-    time.sleep(6)   # give Chrome time to start and open the debug port
+    p(f"    Chrome PID: {proc.pid} — waiting for debug port {CDP_PORT}...")
+
+    if _wait_for_port("127.0.0.1", CDP_PORT, timeout=30):
+        p(f"    Debug port {CDP_PORT} is open!")
+    else:
+        p(f"    [!] Chrome debug port never opened after 30s.")
+        p(f"        Chrome exit code: {proc.poll()}")
     return proc, None
 
 
