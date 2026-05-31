@@ -221,7 +221,12 @@ def make_browser(playwright, use_real_chrome=False):
 
 def is_blocked(page):
     c = page.content().lower()
-    return "cloudflare" in c or "ray id" in c or "just a moment" in c
+    # Only flag as blocked if it's actually a Cloudflare challenge page,
+    # not just any page that references Cloudflare as a CDN
+    return ("just a moment" in c and "checking" in c) or \
+           "cf-browser-verification" in c or \
+           "__cf_chl_" in c or \
+           ("ray id" in c and "enable javascript" in c)
 
 
 def safe_goto(page, url, retries=2):
