@@ -163,23 +163,25 @@ WAS_SEL   = "[class*='ProductWasPrice--']"
 # ─────────────────────────────────────────────────────────────────
 def launch_chrome_cdp():
     """
-    Kill any existing Chrome, relaunch with --remote-debugging-port so Playwright
-    can attach to it via CDP. Returns the subprocess.Popen handle.
+    Launch a fresh Chrome instance with --remote-debugging-port.
+    Uses a temp profile so it doesn't conflict with any existing Chrome window.
+    Returns (proc, temp_dir) — caller should delete temp_dir when done.
     """
     import subprocess as sp
-    # Kill existing Chrome so the port is free
-    sp.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"],
-           capture_output=True)
-    time.sleep(1.5)
+    import tempfile
+    temp_dir = tempfile.mkdtemp(prefix="scraper_chrome_")
     proc = sp.Popen([
         CHROME_EXE,
         f"--remote-debugging-port={CDP_PORT}",
+        f"--user-data-dir={temp_dir}",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-popup-blocking",
         "--window-size=1280,900",
+        "about:blank",
     ])
-    time.sleep(3)
-    return proc
+    time.sleep(5)   # give Chrome time to start and open the debug port
+    return proc, temp_dir
 
 
 def make_browser(playwright, use_real_chrome=False):
@@ -669,6 +671,7 @@ def main():
                 use_real_chrome = (site_name == "Save On Foods")
 
                 chrome_proc = None
+                chrome_tmp  = None
                 if use_real_chrome:
                     if not CHROME_EXE:
                         p("─" * 60)
@@ -693,7 +696,7 @@ def main():
                         p("  Skipping Save On Foods.")
                         results[site_name] = []
                         continue
-                    chrome_proc = launch_chrome_cdp()
+                    chrome_proc, chrome_tmp = launch_chrome_cdp()
                     p("  Chrome launched with remote debugging. Connecting...")
 
                 prods = scrape_site(pw, site_name, cfg, use_real_chrome=use_real_chrome)
@@ -706,6 +709,12 @@ def main():
                     except Exception:
                         pass
                     time.sleep(1)
+                    # Clean up the temp profile directory
+                    try:
+                        import shutil
+                        shutil.rmtree(chrome_tmp, ignore_errors=True)
+                    except Exception:
+                        pass
 
                 if prods:
                     p(f"  Building {site_name} Excel file...")
