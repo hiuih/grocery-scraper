@@ -161,27 +161,30 @@ WAS_SEL   = "[class*='ProductWasPrice--']"
 # ─────────────────────────────────────────────────────────────────
 #  Browser helpers
 # ─────────────────────────────────────────────────────────────────
+CHROME_USER_DATA = os.path.join(os.path.expanduser("~"),
+                                r"AppData\Local\Google\Chrome\User Data")
+
+
 def launch_chrome_cdp():
     """
-    Launch a fresh Chrome instance with --remote-debugging-port.
-    Uses a temp profile so it doesn't conflict with any existing Chrome window.
-    Returns (proc, temp_dir) — caller should delete temp_dir when done.
+    Launch Chrome with the user's REAL profile + remote debugging.
+    This carries existing Cloudflare cookies so Save On Foods works.
+    Chrome must be fully closed before calling this.
+    Returns (proc, None).
     """
     import subprocess as sp
-    import tempfile
-    temp_dir = tempfile.mkdtemp(prefix="scraper_chrome_")
     proc = sp.Popen([
         CHROME_EXE,
         f"--remote-debugging-port={CDP_PORT}",
-        f"--user-data-dir={temp_dir}",
+        f"--user-data-dir={CHROME_USER_DATA}",
+        "--profile-directory=Default",
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-popup-blocking",
         "--window-size=1280,900",
         "about:blank",
     ])
-    time.sleep(5)   # give Chrome time to start and open the debug port
-    return proc, temp_dir
+    time.sleep(5)
+    return proc, None
 
 
 def make_browser(playwright, use_real_chrome=False):
@@ -689,14 +692,20 @@ def main():
                         results[site_name] = []
                         continue
                     p("─" * 60)
-                    p("  SAVE ON FOODS needs your real Chrome/Edge browser.")
-                    p("  Chrome will be closed and reopened automatically.")
-                    p("  If a security check appears, click it and wait —")
-                    p("  the script will continue on its own after ~5 seconds.")
+                    p("  SAVE ON FOODS — ACTION REQUIRED")
+                    p()
+                    p("  1. CLOSE Google Chrome completely (all windows).")
+                    p("     (This conversation will still be saved — you can")
+                    p("      reopen it on claude.ai when scraping is done.)")
+                    p()
+                    p("  2. Press ENTER here once Chrome is fully closed.")
+                    p()
+                    p("  Chrome will reopen automatically with your profile")
+                    p("  so Save On Foods won't block it.")
                     p("─" * 60)
                     p()
                     try:
-                        input("  Press ENTER to open Chrome and start Save On Foods... ")
+                        input("  Press ENTER when Chrome is fully closed... ")
                     except (EOFError, KeyboardInterrupt):
                         p("  Skipping Save On Foods.")
                         results[site_name] = []
@@ -714,12 +723,13 @@ def main():
                     except Exception:
                         pass
                     time.sleep(1)
-                    # Clean up the temp profile directory
-                    try:
-                        import shutil
-                        shutil.rmtree(chrome_tmp, ignore_errors=True)
-                    except Exception:
-                        pass
+                    # Clean up temp profile dir if one was used
+                    if chrome_tmp:
+                        try:
+                            import shutil
+                            shutil.rmtree(chrome_tmp, ignore_errors=True)
+                        except Exception:
+                            pass
 
                 if prods:
                     p(f"  Building {site_name} Excel file...")
