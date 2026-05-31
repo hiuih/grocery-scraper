@@ -7,11 +7,12 @@ Scrapes every product from:
   - Save On Foods     ->  Save_On_Foods_Products.xlsx
 
 HOW TO RUN:
-  Double-click this file, or run:  python grocery_scraper.py
-  Results appear on your Desktop when finished.
+  Double-click "Run Grocery Scraper.bat"  OR  open a terminal and run:
+      python grocery_scraper.py
+  Results appear on your Desktop when finished (~30-90 min).
 """
 
-# ── Fix console encoding (avoids blank-window bug) ────────────────
+# ── Fix console encoding ──────────────────────────────────────────
 import sys, os
 
 try:
@@ -51,9 +52,9 @@ def pip_install(pkg):
         subprocess.run([sys.executable, "-m", "pip", "install", pkg])
 
 
-for pkg, iname in [("playwright", "playwright"), ("openpyxl", "openpyxl")]:
+for pkg in ["playwright", "openpyxl", "requests"]:
     try:
-        __import__(iname)
+        __import__(pkg)
         p(f"  [OK] {pkg}")
     except ImportError:
         p(f"  Installing {pkg}...")
@@ -74,12 +75,10 @@ try:
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-    import re, time, json
+    import re, time
     from datetime import datetime
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 except ImportError as e:
     p(f"  ERROR: {e}")
-    p("  Run:  pip install playwright openpyxl && python -m playwright install chromium")
     try:
         input("  Press ENTER to close...")
     except EOFError:
@@ -101,12 +100,13 @@ def find_desktop():
     except Exception:
         pass
     home = os.path.expanduser("~")
-    for p_ in [os.path.join(home, "Desktop"),
-               os.path.join(home, "OneDrive", "Desktop"),
-               os.path.join(home, "OneDrive - Personal", "Desktop"),
-               os.path.join(home, "OneDrive - Commercial", "Desktop")]:
-        if os.path.isdir(p_):
-            return p_
+    for candidate in [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "OneDrive", "Desktop"),
+        os.path.join(home, "OneDrive - Personal", "Desktop"),
+    ]:
+        if os.path.isdir(candidate):
+            return candidate
     fb = os.path.join(home, "Desktop")
     os.makedirs(fb, exist_ok=True)
     return fb
@@ -117,178 +117,78 @@ FRESH_ST_FILE = os.path.join(OUTPUT_DIR, "Fresh_St_Market_Products.xlsx")
 SAVE_ON_FILE  = os.path.join(OUTPUT_DIR, "Save_On_Foods_Products.xlsx")
 
 # ─────────────────────────────────────────────────────────────────
-#  Fresh St. Market — categories
-#  Parent categories + all named subcategories discovered from the
-#  site nav (236 total).  We scrape every leaf that has products.
+#  Site configs  (both run on the same Wynshop platform)
 # ─────────────────────────────────────────────────────────────────
-FRESH_ST_BASE = "https://www.freshstmarket.com/sm/pickup/rsid/055"
+SITES = {
+    "Fresh St. Market": {
+        "base":  "https://www.freshstmarket.com/sm/pickup/rsid/055",
+        "host":  "freshstmarket.com",
+        "file":  FRESH_ST_FILE,
+    },
+    "Save On Foods": {
+        "base":  "https://www.saveonfoods.com/sm/planning/rsid/1982",
+        "host":  "saveonfoods.com",
+        "file":  SAVE_ON_FILE,
+    },
+}
 
-FRESH_ST_CATEGORIES = [
-    # ── Deli & Prepared Foods ──────────────────────────────────
-    ("deli-prepared-foods-id-3568",             "Deli & Prepared Foods"),
-    ("deli-prepared-foods/deli-meats-id-3569",  "Deli & Prepared Foods / Deli Meats"),
-    ("deli-prepared-foods/deli-cheese-id-3570", "Deli & Prepared Foods / Deli Cheese"),
-    # ── Baby ──────────────────────────────────────────────────
-    ("baby-id-3571",                            "Baby"),
-    ("baby/baby-food-id-3572",                  "Baby / Baby Food"),
-    ("baby/baby-care-id-3573",                  "Baby / Baby Care"),
-    ("baby/diapers-training-pants-id-3574",     "Baby / Diapers"),
-    ("baby/formula-id-3575",                    "Baby / Formula"),
-    # ── Personal Care ─────────────────────────────────────────
-    ("personal-care-items-id-3605",             "Personal Care"),
-    ("personal-care-items/hair-care-id-3606",   "Personal Care / Hair Care"),
-    ("personal-care-items/skin-care-id-3607",   "Personal Care / Skin Care"),
-    ("personal-care-items/oral-care-id-3608",   "Personal Care / Oral Care"),
-    ("personal-care-items/feminine-care-id-3609","Personal Care / Feminine Care"),
-    ("personal-care-items/mens-grooming-id-3610","Personal Care / Men's Grooming"),
-    # ── Dairy, Eggs & Cheese ──────────────────────────────────
-    ("dairy-eggs-cheese-id-3622",               "Dairy, Eggs & Cheese"),
-    ("dairy-eggs-cheese/cheese-id-3623",        "Dairy / Cheese"),
-    ("dairy-eggs-cheese/butter-margarine-id-3624","Dairy / Butter & Margarine"),
-    ("dairy-eggs-cheese/eggs-id-3625",          "Dairy / Eggs"),
-    ("dairy-eggs-cheese/yogurt-id-3626",        "Dairy / Yogurt"),
-    ("dairy-eggs-cheese/milk-id-3627",          "Dairy / Milk"),
-    ("dairy-eggs-cheese/cream-creamers-id-3628","Dairy / Cream & Creamers"),
-    ("dairy-eggs-cheese/sour-cream-dips-id-3629","Dairy / Sour Cream & Dips"),
-    # ── Condiments & Sauces ───────────────────────────────────
-    ("condiments-sauces-id-3657",               "Condiments & Sauces"),
-    ("condiments-sauces/ketchup-mustard-relish-id-3630","Condiments / Ketchup & Mustard"),
-    ("condiments-sauces/salad-dressing-id-3631","Condiments / Salad Dressing"),
-    ("condiments-sauces/cooking-sauces-id-3632","Condiments / Cooking Sauces"),
-    ("condiments-sauces/pickles-olives-id-3633","Condiments / Pickles & Olives"),
-    ("condiments-sauces/oils-vinegars-id-3634", "Condiments / Oils & Vinegars"),
-    ("condiments-sauces/mayo-id-3635",          "Condiments / Mayo"),
-    ("condiments-sauces/soy-sauce-asian-id-3636","Condiments / Soy & Asian Sauces"),
-    ("condiments-sauces/hot-sauce-id-3637",     "Condiments / Hot Sauce"),
-    ("condiments-sauces/bbq-sauce-id-3638",     "Condiments / BBQ Sauce"),
-    # ── Crackers & Cookies ────────────────────────────────────
-    ("crackers-cookies-id-3659",                "Crackers & Cookies"),
-    ("crackers-cookies/crackers-id-3660",       "Crackers & Cookies / Crackers"),
-    ("crackers-cookies/cookies-id-3661",        "Crackers & Cookies / Cookies"),
-    # ── Grains, Pasta & Sides ─────────────────────────────────
-    ("grains-pasta-sides-id-3664",              "Grains, Pasta & Sides"),
-    ("grains-pasta-sides/pasta-id-3665",        "Grains / Pasta"),
-    ("grains-pasta-sides/rice-id-3666",         "Grains / Rice"),
-    ("grains-pasta-sides/bread-crumbs-id-3667", "Grains / Bread Crumbs"),
-    ("grains-pasta-sides/stuffing-id-3668",     "Grains / Stuffing"),
-    ("grains-pasta-sides/soup-id-3669",         "Grains / Soup"),
-    # ── International ─────────────────────────────────────────
-    ("international-id-3671",                   "International"),
-    ("international/asian-id-3672",             "International / Asian"),
-    # ── Bakery ────────────────────────────────────────────────
-    ("bakery-id-3673",                          "Bakery"),
-    ("bakery/bread-id-3674",                    "Bakery / Bread"),
-    # ── Bulk ──────────────────────────────────────────────────
-    ("bulk-id-3675",                            "Bulk"),
-    ("bulk/bulk-nuts-seeds-id-3676",            "Bulk / Nuts & Seeds"),
-    ("bulk/bulk-grains-id-3677",                "Bulk / Grains"),
-    ("bulk/bulk-dried-fruit-id-3678",           "Bulk / Dried Fruit"),
-    ("bulk/bulk-candy-id-3679",                 "Bulk / Candy"),
-    ("bulk/bulk-baking-id-3680",                "Bulk / Baking"),
-    # ── Beverages ─────────────────────────────────────────────
-    ("beverages-id-3691",                       "Beverages"),
-    ("beverages/coffee-id-3692",                "Beverages / Coffee"),
-    ("beverages/tea-id-3693",                   "Beverages / Tea"),
-    ("beverages/juices-id-3639",                "Beverages / Juices"),
-    ("beverages/kombucha-id-3640",              "Beverages / Kombucha"),
-    ("beverages/meal-replacement-id-3641",      "Beverages / Meal Replacement"),
-    ("beverages/milk-substitutes-id-3642",      "Beverages / Milk Substitutes"),
-    ("beverages/drink-mixes-crystals-id-3695",  "Beverages / Drink Mixes"),
-    ("beverages/soda-pop-sport-energy-drinks-id-3698","Beverages / Soda & Energy"),
-    ("beverages/nonalcoholic-id-3750",          "Beverages / Non-Alcoholic"),
-    ("beverages/water-id-3751",                 "Beverages / Water"),
-    # ── Frozen Food ───────────────────────────────────────────
-    ("frozen-food-id-3708",                     "Frozen Food"),
-    ("frozen-food/frozen-meals-id-3709",        "Frozen / Meals"),
-    ("frozen-food/frozen-pizza-id-3710",        "Frozen / Pizza"),
-    ("frozen-food/frozen-vegetables-id-3711",   "Frozen / Vegetables"),
-    ("frozen-food/frozen-fruit-id-3712",        "Frozen / Fruit"),
-    ("frozen-food/frozen-desserts-id-3713",     "Frozen / Desserts"),
-    ("frozen-food/ice-cream-id-3714",           "Frozen / Ice Cream"),
-    ("frozen-food/frozen-breakfast-id-3715",    "Frozen / Breakfast"),
-    ("frozen-food/frozen-meat-seafood-id-3716", "Frozen / Meat & Seafood"),
-    # ── Household Goods ───────────────────────────────────────
-    ("household-goods-id-3717",                 "Household Goods"),
-    ("household-goods/cleaning-supplies-id-3718","Household / Cleaning"),
-    ("household-goods/paper-products-id-3719",  "Household / Paper Products"),
-    ("household-goods/laundry-id-3720",         "Household / Laundry"),
-    ("household-goods/dish-care-id-3721",       "Household / Dish Care"),
-    ("household-goods/bags-wrap-id-3722",       "Household / Bags & Wrap"),
-    ("household-goods/kitchen-items-id-3723",   "Household / Kitchen"),
-    # ── Breakfast & Cereals ───────────────────────────────────
-    ("breakfast-cereals-id-3752",               "Breakfast & Cereals"),
-    ("breakfast-cereals/cereal-id-3753",        "Breakfast / Cereal"),
-    ("breakfast-cereals/oatmeal-hot-cereal-id-3754","Breakfast / Oatmeal"),
-    ("breakfast-cereals/granola-bars-id-3755",  "Breakfast / Granola & Bars"),
-    # ── Canned Goods ──────────────────────────────────────────
-    ("canned-goods-id-3756",                    "Canned Goods"),
-    ("canned-goods/canned-vegetables-id-3757",  "Canned / Vegetables"),
-    ("canned-goods/canned-fruit-id-3758",       "Canned / Fruit"),
-    ("canned-goods/canned-fish-id-3759",        "Canned / Fish"),
-    ("canned-goods/canned-beans-id-3760",       "Canned / Beans"),
-    ("canned-goods/canned-tomatoes-id-3761",    "Canned / Tomatoes"),
-    ("canned-goods/canned-meat-id-3762",        "Canned / Meat"),
-    # ── Snacks & Candy ────────────────────────────────────────
-    ("snacks-candy-id-3777",                    "Snacks & Candy"),
-    ("snacks-candy/chips-id-3778",              "Snacks / Chips"),
-    ("snacks-candy/candy-id-3779",              "Snacks / Candy"),
-    ("snacks-candy/chocolate-id-3780",          "Snacks / Chocolate"),
-    ("snacks-candy/popcorn-id-3781",            "Snacks / Popcorn"),
-    ("snacks-candy/nuts-seeds-id-3782",         "Snacks / Nuts & Seeds"),
-    ("snacks-candy/dried-fruit-id-3783",        "Snacks / Dried Fruit"),
-    ("snacks-candy/snack-bars-id-3784",         "Snacks / Snack Bars"),
-    ("snacks-candy/rice-cakes-id-3785",         "Snacks / Rice Cakes"),
-    # ── Pet Care ──────────────────────────────────────────────
-    ("pet-care-id-3788",                        "Pet Care"),
-    ("pet-care/dog-food-id-3789",               "Pet Care / Dog Food"),
-    ("pet-care/cat-food-id-3790",               "Pet Care / Cat Food"),
-    ("pet-care/pet-treats-id-3791",             "Pet Care / Pet Treats"),
-    ("pet-care/pet-supplies-id-3792",           "Pet Care / Pet Supplies"),
-    # ── Wellness ──────────────────────────────────────────────
-    ("wellness-products-id-3795",               "Wellness"),
-    ("wellness-products/vitamins-id-3793",      "Wellness / Vitamins"),
-    ("wellness-products/supplements-id-3794",   "Wellness / Supplements"),
-    # ── Meat ──────────────────────────────────────────────────
-    ("meat-id-3796",                            "Meat"),
-    ("meat/beef-id-3797",                       "Meat / Beef"),
-    ("meat/pork-id-3798",                       "Meat / Pork"),
-    ("meat/chicken-id-3799",                    "Meat / Chicken"),
-    ("meat/turkey-id-3800",                     "Meat / Turkey"),
-    ("meat/lamb-id-3801",                       "Meat / Lamb"),
-    ("meat/sausages-id-3802",                   "Meat / Sausages"),
-    # ── Produce ───────────────────────────────────────────────
-    ("produce-id-3803",                         "Produce"),
-    ("produce/vegetables-id-3807",              "Produce / Vegetables"),
-    ("produce/fruit-id-3808",                   "Produce / Fruit"),
-    ("produce/herbs-id-3809",                   "Produce / Herbs"),
-    ("produce/salads-id-3810",                  "Produce / Salads"),
-    ("produce/organic-produce-id-3811",         "Produce / Organic"),
-    # ── Seafood ───────────────────────────────────────────────
-    ("seafood-id-3804",                         "Seafood"),
-    ("seafood/fresh-seafood-id-3812",           "Seafood / Fresh"),
-    ("seafood/frozen-seafood-id-3813",          "Seafood / Frozen"),
-    # ── Spices & Baking ───────────────────────────────────────
-    ("spices-baking-id-3806",                   "Spices & Baking"),
-    ("spices-baking/spices-id-3814",            "Spices / Spices"),
-    ("spices-baking/baking-id-3815",            "Spices / Baking"),
-    ("spices-baking/flour-id-3816",             "Spices / Flour"),
-    ("spices-baking/sugar-id-3817",             "Spices / Sugar"),
-]
+CHROME_EXE  = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+CDP_PORT    = 9222
 
 # ─────────────────────────────────────────────────────────────────
-#  Browser setup
+#  DOM selectors  (same on both sites)
 # ─────────────────────────────────────────────────────────────────
 CARD_SEL  = "[data-testid^='ProductCardWrapper']"
-NAME_SEL  = "[class*='ProductCardNameWrapper--']"
 PRICE_SEL = "[class*='ProductPrice--']"
 WAS_SEL   = "[class*='ProductWasPrice--']"
-UNIT_RE   = re.compile(
-    r",\s*\d*\.?\d+\s*(Each|Gram|Kilogram|ml|L|kg|g|lb|oz|pk|pack)\b.*$",
-    flags=re.IGNORECASE
-)
+
+# ─────────────────────────────────────────────────────────────────
+#  Browser helpers
+# ─────────────────────────────────────────────────────────────────
+def launch_chrome_cdp():
+    """
+    Kill any existing Chrome, relaunch with --remote-debugging-port so Playwright
+    can attach to it via CDP. Returns the subprocess.Popen handle.
+    """
+    import subprocess as sp
+    # Kill existing Chrome so the port is free
+    sp.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"],
+           capture_output=True)
+    time.sleep(1.5)
+    proc = sp.Popen([
+        CHROME_EXE,
+        f"--remote-debugging-port={CDP_PORT}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--window-size=1280,900",
+    ])
+    time.sleep(3)
+    return proc
 
 
-def make_browser(playwright):
+def make_browser(playwright, use_real_chrome=False):
+    """
+    use_real_chrome=True  → attach to Chrome via CDP on port 9222 (real fingerprint,
+                            bypasses Cloudflare). Call launch_chrome_cdp() first.
+    use_real_chrome=False → headless Chromium (fast, works for Fresh St.).
+    Returns (browser, context).
+    """
+    if use_real_chrome:
+        # Retry a few times — Chrome needs a moment to start its debug port
+        last_err = None
+        for attempt in range(6):
+            try:
+                browser = playwright.chromium.connect_over_cdp(
+                    f"http://localhost:{CDP_PORT}", timeout=8000)
+                ctx = (browser.contexts[0]
+                       if browser.contexts
+                       else browser.new_context(viewport={"width": 1280, "height": 900}))
+                return browser, ctx
+            except Exception as e:
+                last_err = e
+                time.sleep(2)
+        raise RuntimeError(f"Could not connect to Chrome on port {CDP_PORT}: {last_err}")
+
     browser = playwright.chromium.launch(headless=True)
     ctx = browser.new_context(
         user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -297,482 +197,364 @@ def make_browser(playwright):
         viewport={"width": 1280, "height": 900},
         locale="en-CA",
     )
-    ctx.route("**/*.{mp4,mp3,avi,wmv}", lambda r: r.abort())
+    ctx.route("**/*.{mp4,mp3,avi,wmv,woff2,woff}", lambda r: r.abort())
     return browser, ctx
 
 
-# ─────────────────────────────────────────────────────────────────
-#  API interception helpers
-# ─────────────────────────────────────────────────────────────────
-def _looks_like_products(lst):
-    if not isinstance(lst, list) or not lst:
-        return False
-    s = lst[0]
-    if not isinstance(s, dict):
-        return False
-    keys_lc = {k.lower() for k in s.keys()}
-    return bool(keys_lc & {"sku", "upc", "name", "price", "productid",
-                            "displayname", "itemid", "wasprize", "waspricestring"})
+def is_blocked(page):
+    c = page.content().lower()
+    return "cloudflare" in c or "ray id" in c or "just a moment" in c
 
 
-def _fmt_price(v):
-    if v is None:
-        return ""
-    s = str(v).strip().replace(",", "")
-    if not s or s.lower() in ("0", "0.0", "none", "null", ""):
-        return ""
-    if s.startswith("$"):
-        return s
-    try:
-        return f"${float(s):.2f}"
-    except ValueError:
-        return s
-
-
-def _parse_api_item(item, category=""):
-    """
-    Parse one product dict from the Wynshop/storefrontgateway API.
-    Field names confirmed from live HTML inspection:
-      sku, name, price (string, current price), wasPrice (string, original),
-      isDiscounted (bool)
-    """
-    pnum = str(
-        item.get("sku") or item.get("upc") or item.get("productId") or
-        item.get("id") or item.get("itemId") or ""
-    ).strip().lstrip("0")
-
-    name = str(
-        item.get("name") or item.get("displayName") or item.get("title") or
-        item.get("productName") or item.get("description") or ""
-    ).strip()
-
-    if not name and not pnum:
-        return None
-
-    # ── Wynshop flat format ──────────────────────────────────────
-    # price    = current price (may be sale price)  e.g. "$10.49"
-    # wasPrice = original price (only present if on sale) e.g. "$13.99"
-    # isDiscounted = True/False
-    is_disc   = bool(item.get("isDiscounted", False))
-    price_str = str(item.get("price")    or "").strip()
-    was_str   = str(item.get("wasPrice") or "").strip()
-
-    if is_disc and was_str:
-        regular = _fmt_price(was_str)
-        promo   = _fmt_price(price_str)
-    elif price_str:
-        regular = _fmt_price(price_str)
-        promo   = ""
-    else:
-        # ── Nested price object (fallback for other platforms) ───
-        pd = item.get("price") or item.get("prices") or item.get("pricing") or {}
-        if isinstance(pd, dict):
-            reg_raw  = (pd.get("regular") or pd.get("originalPrice") or
-                        pd.get("listPrice") or pd.get("was") or
-                        pd.get("regularPrice") or "")
-            sale_raw = (pd.get("sale") or pd.get("promo") or
-                        pd.get("salePrice") or pd.get("now") or
-                        pd.get("promotionalPrice") or "")
-            if not reg_raw:
-                reg_raw = pd.get("current") or pd.get("value") or pd.get("amount") or ""
-            regular = _fmt_price(reg_raw)
-            promo   = _fmt_price(sale_raw)
-        elif isinstance(pd, (int, float)):
-            regular = _fmt_price(pd)
-            promo   = ""
-        else:
-            regular = _fmt_price(
-                item.get("regularPrice") or item.get("listPrice") or
-                item.get("basePrice") or item.get("normalPrice") or "")
-            promo   = _fmt_price(
-                item.get("salePrice") or item.get("promoPrice") or
-                item.get("discountedPrice") or "")
-
-    return {
-        "Category":       category,
-        "Product Name":   name,
-        "Product Number": pnum,
-        "Regular Price":  regular,
-        "Promo Price":    promo,
-    }
-
-
-def page_fetch(page, url):
-    """
-    Fetch a URL using the browser's own fetch() — includes session cookies
-    and auth headers automatically. Much more reliable than page.request.get().
-    """
-    result = page.evaluate("""
-    async (url) => {
-        try {
-            const r = await fetch(url, {
-                credentials: 'include',
-                headers: { 'Accept': 'application/json, */*' }
-            });
-            if (!r.ok) return { _error: r.status };
-            return await r.json();
-        } catch(e) {
-            return { _error: String(e) };
-        }
-    }
-    """, url)
-    return result if result else {}
-
-
-def fetch_all_via_api(page, first_url, first_data, products_key, category):
-    """
-    Paginate the storefront API completely.
-    Uses page.evaluate(fetch()) so cookies/auth are handled automatically.
-    Tries take=9999 first; falls back to skip-based pagination.
-    """
-    raw       = list(first_data[products_key])
-    page_size = max(len(raw), 1)
-
-    # Total count — handle int or string
-    total = None
-    for tk in ("totalCount", "total", "totalItems", "count", "numFound",
-               "totalResults", "itemCount", "recordCount"):
-        v = first_data.get(tk)
-        if v is not None:
-            try:
-                total = int(v)
-                break
-            except (ValueError, TypeError):
-                pass
-
-    p(f"    API: {page_size} items, totalCount={total}")
-
-    if total and total <= page_size:
-        return [r for r in (_parse_api_item(i, category) for i in raw) if r]
-
-    # Parse URL params
-    parsed = urlparse(first_url)
-    params = {k: (v[0] if len(v) == 1 else v)
-              for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
-
-    skip_key = next((s for s in ("skip", "Skip", "offset", "Offset", "start", "from")
-                     if s in params), "skip")
-    take_key = next((s for s in ("take", "Take", "limit", "Limit", "pageSize", "count")
-                     if s in params), "take")
-
-    # ── Try fetching everything at once (take=9999) ────────────
-    params[skip_key] = "0"
-    params[take_key] = "9999"
-    big_url  = urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
-    big_data = page_fetch(page, big_url)
-
-    if (not big_data.get("_error") and
-            isinstance(big_data.get(products_key), list) and
-            len(big_data[products_key]) > page_size):
-        big_list = big_data[products_key]
-        p(f"    Got all {len(big_list)} products in one request.")
-        return [r for r in (_parse_api_item(i, category) for i in big_list) if r]
-
-    # ── Fall back to skip-based pagination ─────────────────────
-    params[take_key] = str(page_size)
-    if not total:
-        total = 99999   # keep going until we get empty responses
-
-    skip     = page_size
-    page_num = 2
-    no_new   = 0
-
-    while skip < total and no_new < 3:
-        params[skip_key] = str(skip)
-        next_url = urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
-        data = page_fetch(page, next_url)
-
-        if data.get("_error"):
-            p(f"    API error at skip={skip}: {data['_error']}")
-            no_new += 1
-            skip += page_size
-            page_num += 1
-            continue
-
-        items = data.get(products_key, [])
-        if not items:
-            no_new += 1
-        else:
-            no_new = 0
-            raw.extend(items)
-            skip += len(items)
-            p(f"    Page {page_num}: +{len(items)} items  "
-              f"(collected: {len(raw)}{f'/{total}' if total < 99999 else ''})")
-        page_num += 1
-
-    return [r for r in (_parse_api_item(i, category) for i in raw) if r]
+def safe_goto(page, url, retries=2):
+    for attempt in range(retries + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=40000)
+            time.sleep(2.5)
+            # Wait up to 30s if Cloudflare challenge appears
+            if is_blocked(page):
+                p("    [cf] Cloudflare challenge — waiting for it to pass...")
+                for _ in range(12):
+                    time.sleep(5)
+                    if not is_blocked(page):
+                        p("    [cf] Passed.")
+                        break
+            return True
+        except Exception as e:
+            if attempt == retries:
+                p(f"    [!] Failed after {retries+1} attempts: {e}")
+                return False
+            time.sleep(3)
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────
-#  DOM fallback — incremental scroll for virtual lists
+#  Category discovery
 # ─────────────────────────────────────────────────────────────────
-def extract_dom_incremental(page, category, max_stall=10):
-    seen = {}
-    try:
-        page.wait_for_selector(CARD_SEL, timeout=15000)
-    except Exception:
+def discover_categories(page, base_url, host):
+    """
+    Load /departments and return list of (slug, name) for every LEAF
+    subcategory (those that have a parent/child slug with a '/').
+    Leaf categories are the ones that contain actual products.
+    """
+    p(f"  Discovering categories from /departments...")
+    if not safe_goto(page, f"{base_url}/departments"):
         return []
 
-    time.sleep(1)
-    scroll_pos, step, stall, last_h = 0, 400, 0, 0
+    js = f"""
+    (() => {{
+        const prefix = 'https://www.{host}';
+        const links = Array.from(document.querySelectorAll('a[href*="/categories/"]'));
+        const seen = new Set();
+        const results = [];
+        for (const a of links) {{
+            const slug = a.href
+                .replace(prefix, '')
+                .replace(/\\/sm\\/[^/]+\\/rsid\\/\\d+/, '')
+                .replace('/categories/', '')
+                .trim();
+            if (!slug || seen.has(slug) || slug.startsWith('category/')) continue;
+            if (!slug.includes('-id-')) continue;
+            seen.add(slug);
+            results.push({{ slug, name: a.innerText.trim() }});
+        }}
+        return results;
+    }})()
+    """
+    try:
+        all_cats = page.evaluate(js)
+    except Exception as e:
+        p(f"  [!] Category discovery error: {e}")
+        return []
 
-    def _grab():
-        for card in page.query_selector_all(CARD_SEL):
-            try:
-                raw_id = card.get_attribute("data-testid") or ""
-                pnum   = raw_id.replace("ProductCardWrapper-", "").lstrip("0") or raw_id
-                if not pnum or pnum in seen:
-                    continue
-                ne = card.query_selector(NAME_SEL)
-                if not ne:
-                    continue
-                name = ne.inner_text().strip()
-                name = name.replace("Open Product Description", "").strip()
-                name = UNIT_RE.sub("", name).strip()
-                pe  = card.query_selector(PRICE_SEL)
-                we  = card.query_selector(WAS_SEL)
-                cur     = pe.inner_text().strip() if pe else ""
-                was_raw = we.inner_text().strip() if we else ""
-                was     = re.sub(r"^was\s*", "", was_raw, flags=re.IGNORECASE).strip()
-                seen[pnum] = {
-                    "Category":       category,
-                    "Product Name":   name,
-                    "Product Number": pnum,
-                    "Regular Price":  was if was else cur,
-                    "Promo Price":    cur if was else "",
-                }
-            except Exception:
+    # Only leaf categories (slug contains '/' = has a parent/child path)
+    leafs = [c for c in all_cats if '/' in c['slug']]
+    p(f"  Found {len(leafs)} leaf categories  ({len(all_cats)} total incl. parents)")
+    return [(c['slug'], c['name']) for c in leafs]
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Product extraction from one page
+# ─────────────────────────────────────────────────────────────────
+def extract_products(page, category=""):
+    cards = page.query_selector_all(CARD_SEL)
+    results = []
+    for card in cards:
+        try:
+            raw_id = card.get_attribute("data-testid") or ""
+            pnum   = raw_id.replace("ProductCardWrapper-", "").lstrip("0") or raw_id
+
+            # Second <p> is the clean product name; first has price appended in aria form
+            ps   = card.query_selector_all("p")
+            name = ""
+            if len(ps) >= 2:
+                name = ps[1].inner_text().strip()
+            elif ps:
+                name = re.sub(r",\s*\$[\d.]+.*$", "", ps[0].inner_text()).strip()
+
+            name = name.replace("Open Product Description", "").strip()
+
+            pe      = card.query_selector(PRICE_SEL)
+            we      = card.query_selector(WAS_SEL)
+            current = pe.inner_text().strip() if pe else ""
+            was_raw = we.inner_text().strip() if we else ""
+            was     = re.sub(r"^was\s*", "", was_raw, flags=re.IGNORECASE).strip()
+
+            if not name and not pnum:
                 continue
 
-    while stall < max_stall:
-        prev = len(seen)
-        _grab()
-        stall = 0 if len(seen) > prev else stall + 1
-        scroll_pos += step
-        page.evaluate(f"window.scrollTo(0, {scroll_pos})")
-        time.sleep(0.6)
-        cur_h = page.evaluate("document.body.scrollHeight")
-        if scroll_pos >= cur_h and cur_h == last_h:
-            _grab()
-            break
-        last_h = cur_h
-
-    return list(seen.values())
-
-
-# ─────────────────────────────────────────────────────────────────
-#  Fresh St. Market scraper
-# ─────────────────────────────────────────────────────────────────
-def scrape_fresh_st(playwright):
-    p("=" * 60)
-    p("  Scraping FRESH ST. MARKET")
-    p("=" * 60)
-
-    browser, ctx = make_browser(playwright)
-    page = ctx.new_page()
-    all_products = {}   # pnum -> dict
-
-    total_cats = len(FRESH_ST_CATEGORIES)
-    for cat_i, (cat_slug, cat_name) in enumerate(FRESH_ST_CATEGORIES, 1):
-        p(f"\n  [{cat_i}/{total_cats}] {cat_name}")
-
-        # ── Intercept ONE API response ────────────────────────
-        intercepted = []
-
-        def _on_resp(resp, _buf=intercepted):
-            if _buf:
-                return
-            try:
-                if resp.status != 200:
-                    return
-                if "json" not in resp.headers.get("content-type", ""):
-                    return
-                data = resp.json()
-                if not isinstance(data, dict):
-                    return
-                for key in ("products", "items", "data", "results",
-                            "records", "catalogItems", "productList"):
-                    val = data.get(key)
-                    if _looks_like_products(val):
-                        _buf.append((resp.url, data, key))
-                        return
-            except Exception:
-                pass
-
-        page.on("response", _on_resp)
-        url = f"{FRESH_ST_BASE}/categories/{cat_slug}"
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=35000)
-            time.sleep(3)
-        except Exception as e:
-            p(f"    [!] Load error: {e}")
-            page.remove_listener("response", _on_resp)
+            results.append({
+                "Category":       category,
+                "Product Name":   name,
+                "Product Number": pnum,
+                "Regular Price":  was if was else current,
+                "Promo Price":    current if was else "",
+            })
+        except Exception:
             continue
+    return results
 
-        # Scroll once to trigger lazy API calls
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(2)
-        page.evaluate("window.scrollTo(0, 0)")
-        time.sleep(0.5)
-        page.remove_listener("response", _on_resp)
 
-        # ── Extract ───────────────────────────────────────────
-        if intercepted:
-            first_url, first_data, products_key = intercepted[0]
-            p(f"    API intercepted — paginating...")
-            cat_prods = fetch_all_via_api(
-                page, first_url, first_data, products_key, cat_name)
-        else:
-            p("    No API found — using DOM scroll fallback")
-            cat_prods = extract_dom_incremental(page, cat_name)
+# ─────────────────────────────────────────────────────────────────
+#  Paginate through all pages of a URL
+# ─────────────────────────────────────────────────────────────────
+def scrape_all_pages(page, base_url, category, page_size=30):
+    """
+    Scrape page 1, read total count, then paginate with ?page=N&skip=M.
+    Returns list of product dicts.
+    """
+    if not safe_goto(page, base_url):
+        return []
 
-        # ── Merge (deduplicate by product number) ─────────────
-        cat_new = 0
-        for pr in cat_prods:
+    if is_blocked(page):
+        p(f"    [!] Blocked.")
+        return []
+
+    # Read total from pagination widget
+    total_items = 0
+    try:
+        pag_el = page.query_selector('[class*="Pagination"]')
+        if pag_el:
+            m = re.search(r"of\s+([\d,]+)", pag_el.inner_text())
+            if m:
+                total_items = int(m.group(1).replace(",", ""))
+    except Exception:
+        pass
+
+    prods_p1 = extract_products(page, category)
+    if not prods_p1 and total_items == 0:
+        return []
+
+    if total_items == 0:
+        total_items = len(prods_p1)
+
+    total_pages = max(1, -(-total_items // page_size))
+    all_prods   = {pr["Product Number"]: pr for pr in prods_p1 if pr["Product Number"]}
+
+    for pg in range(2, total_pages + 1):
+        url = f"{base_url}?page={pg}&skip={(pg-1)*page_size}"
+        if not safe_goto(page, url):
+            break
+        if is_blocked(page):
+            p(f"    [!] Blocked at page {pg}.")
+            break
+        prods = extract_products(page, category)
+        if not prods:
+            break
+        for pr in prods:
+            pn = pr["Product Number"]
+            if pn and pn not in all_prods:
+                all_prods[pn] = pr
+
+    return list(all_prods.values())
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Sitemap gap-fill  (catches any products not in any category page)
+# ─────────────────────────────────────────────────────────────────
+def scrape_sitemap_gaps(page, base_url, scraped_pnums_set):
+    """
+    Fetch /sitemap.xml, compare product SKUs with what was scraped,
+    navigate to each missing product page and read __PRELOADED_STATE__.product.
+    """
+    import requests as _req
+
+    host        = base_url.split('/sm/')[0]          # https://www.freshstmarket.com
+    sitemap_url = f"{host}/sitemap.xml"
+
+    p(f"  Fetching sitemap: {sitemap_url}")
+    try:
+        r = _req.get(sitemap_url, timeout=20,
+                     headers={"User-Agent": "Mozilla/5.0"})
+        text = r.text
+    except Exception as e:
+        p(f"  [!] Sitemap fetch failed: {e}")
+        return []
+
+    product_urls = re.findall(
+        r'https://www\.freshstmarket\.com/product/[^\s<>"]+', text)
+
+    missing = []
+    for url in product_urls:
+        m = re.search(r'-id-(\d+)$', url)
+        if not m:
+            continue
+        raw_sku = m.group(1)
+        sku     = raw_sku.lstrip("0") or raw_sku
+        if sku not in scraped_pnums_set:
+            slug = url.replace(f"{host}/product/", "")
+            missing.append((sku, slug))
+
+    p(f"  Sitemap: {len(product_urls)} products total, "
+      f"{len(missing)} not yet in scraped set")
+
+    if not missing:
+        p("  All sitemap products already captured!")
+        return []
+
+    results = []
+    for i, (sku, slug) in enumerate(missing, 1):
+        url = f"{base_url}/product/{slug}"
+        try:
+            if not safe_goto(page, url):
+                continue
+            prod = page.evaluate("window.__PRELOADED_STATE__?.product || {}")
+            if not isinstance(prod, dict) or not prod.get("name"):
+                continue
+
+            name     = str(prod.get("name", "")).strip()
+            price    = str(prod.get("price", "") or "").strip()
+            was      = str(prod.get("wasPrice", "") or "").strip()
+            is_disc  = bool(prod.get("isDiscounted", False))
+            cats     = prod.get("categories") or []
+            cat_name = cats[0].get("name", "") if cats else "Uncategorized"
+
+            results.append({
+                "Category":       cat_name,
+                "Product Name":   name,
+                "Product Number": sku,
+                "Regular Price":  was if (is_disc and was) else price,
+                "Promo Price":    price if (is_disc and was) else "",
+            })
+        except Exception:
+            pass
+
+        if i % 10 == 0 or i == len(missing):
+            p(f"  Gap fill: {i}/{len(missing)} done  ({len(results)} found)")
+
+    p(f"  Gap fill complete: {len(results)} additional products added.")
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Main site scraper
+# ─────────────────────────────────────────────────────────────────
+def scrape_site(playwright, site_name, cfg, use_real_chrome=False):
+    p("=" * 60)
+    p(f"  Scraping {site_name.upper()}")
+    p("=" * 60)
+
+    base     = cfg["base"]
+    host     = cfg["host"]
+    all_prods = {}   # pnum -> dict
+
+    browser, ctx = make_browser(playwright, use_real_chrome)
+    page = ctx.new_page()
+
+    # ── Step 1: Discover categories ───────────────────────────────
+    categories = discover_categories(page, base, host)
+    if not categories:
+        p("  [!] Could not discover categories. Trying promotions page only.")
+        categories = []
+
+    p()
+    total_cats = len(categories)
+
+    # ── Step 2: Scrape each leaf category ─────────────────────────
+    for i, (slug, cat_name) in enumerate(categories, 1):
+        url = f"{base}/categories/{slug}"
+        p(f"  [{i}/{total_cats}] {cat_name}", flush=True)
+
+        prods = scrape_all_pages(page, url, cat_name)
+
+        new = 0
+        for pr in prods:
             pn = pr["Product Number"]
             if not pn:
                 continue
-            if pn not in all_products:
-                all_products[pn] = pr
-                cat_new += 1
-            elif pr.get("Promo Price") and not all_products[pn].get("Promo Price"):
-                all_products[pn]["Promo Price"]  = pr["Promo Price"]
-                all_products[pn]["Regular Price"] = pr["Regular Price"]
+            if pn not in all_prods:
+                all_prods[pn] = pr
+                new += 1
 
-        p(f"    +{cat_new} new  |  {len(cat_prods)} fetched  "
-          f"|  running total: {len(all_products)}")
+        p(f"    {len(prods)} items  (+{new} new, running total: {len(all_prods)})")
 
-    browser.close()
-    p(f"\n  Fresh St. finished — {len(all_products):,} unique products.\n")
-    return list(all_products.values())
+    # ── Step 3: Overlay promo prices from /promotions ─────────────
+    p()
+    p("  Overlaying promo prices from /promotions...")
+    promo_url = f"{base}/promotions"
+    promo_total = 0
+    if safe_goto(page, promo_url) and not is_blocked(page):
+        try:
+            pag_el = page.query_selector('[class*="Pagination"]')
+            if pag_el:
+                m = re.search(r"of\s+([\d,]+)", pag_el.inner_text())
+                if m:
+                    promo_total = int(m.group(1).replace(",", ""))
+        except Exception:
+            pass
 
+        promo_pages = max(1, -(-promo_total // 30)) if promo_total else 1
+        p(f"  Promotions: {promo_total:,} items across {promo_pages} pages")
 
-# ─────────────────────────────────────────────────────────────────
-#  Save On Foods scraper
-# ─────────────────────────────────────────────────────────────────
-SAVE_ON_BASE  = "https://www.saveonfoods.com"
-SAVE_ON_DEPTS = [
-    ("Bakery",          "/store/browse/Bakery/_/N-1b6s"),
-    ("Beverages",       "/store/browse/Beverages/_/N-1b6u"),
-    ("Dairy / Eggs",    "/store/browse/Dairy-Eggs-Cheese/_/N-1b6v"),
-    ("Deli",            "/store/browse/Deli/_/N-1b70"),
-    ("Frozen Foods",    "/store/browse/Frozen-Foods/_/N-1b6z"),
-    ("Grocery",         "/store/browse/Grocery/_/N-1b71"),
-    ("Health & Beauty", "/store/browse/Health-Beauty/_/N-1b72"),
-    ("Household",       "/store/browse/Household/_/N-1b73"),
-    ("Meat & Seafood",  "/store/browse/Meat-Seafood/_/N-1b74"),
-    ("Natural/Organic", "/store/browse/Natural-Organic/_/N-1b75"),
-    ("Produce",         "/store/browse/Produce/_/N-1b76"),
-    ("Specialty",       "/store/browse/Specialty-Foods/_/N-1b77"),
-]
+        for pg in range(1, promo_pages + 1):
+            url = f"{promo_url}?page={pg}&skip={(pg-1)*30}"
+            if pg > 1 and not safe_goto(page, url):
+                break
+            if pg > 1 and is_blocked(page):
+                break
+            prods = extract_products(page, "Sale")
+            for pr in prods:
+                pn = pr["Product Number"]
+                if not pn:
+                    continue
+                if pn in all_prods:
+                    # Update promo price on existing product
+                    if pr.get("Promo Price"):
+                        all_prods[pn]["Promo Price"]   = pr["Promo Price"]
+                        all_prods[pn]["Regular Price"]  = pr["Regular Price"]
+                else:
+                    # Product only found in promotions (not in any category)
+                    all_prods[pn] = pr
 
+            if pg % 10 == 0 or pg == promo_pages:
+                p(f"  Promotions page {pg}/{promo_pages}  "
+                  f"(total products: {len(all_prods):,})")
 
-def scrape_save_on(playwright):
-    p("=" * 60)
-    p("  Scraping SAVE ON FOODS")
-    p("=" * 60)
-
-    browser, ctx = make_browser(playwright)
-    page = ctx.new_page()
+    # ── Step 4: Sitemap gap-fill (Fresh St. only — has public sitemap) ──
+    sitemap_url = f"{base.split('/sm/')[0]}/sitemap.xml"
+    if "freshstmarket" in base:
+        p()
+        p("  Running sitemap gap-fill to catch any missed products...")
+        gap_prods = scrape_sitemap_gaps(page, base, set(all_prods.keys()))
+        for pr in gap_prods:
+            pn = pr["Product Number"]
+            if pn and pn not in all_prods:
+                all_prods[pn] = pr
 
     try:
-        page.goto(SAVE_ON_BASE, wait_until="domcontentloaded", timeout=20000)
-    except Exception as e:
-        p(f"  [!] Could not connect: {e}")
-        browser.close()
-        return []
-
-    content = page.content().lower()
-    if "blocked" in content or "ray id" in content or "cloudflare" in content:
-        p("  [!] Save On Foods is blocking automated access (Cloudflare).")
-        browser.close()
-        return []
-
-    p("  Connected. Starting...\n")
-    all_products = {}
-
-    for dept_name, dept_path in SAVE_ON_DEPTS:
-        p(f"  Department: {dept_name}")
-        page_num = 1
-
-        while True:
-            url = f"{SAVE_ON_BASE}{dept_path}?Nrpp=48&No={(page_num-1)*48}"
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=25000)
-                time.sleep(2)
-            except Exception as e:
-                p(f"    [!] Error: {e}")
-                break
-
-            if "blocked" in page.content().lower():
-                p("    [!] Blocked.")
-                break
-
-            try:
-                page.wait_for_selector("[data-product-id], .product-tile", timeout=12000)
-            except PWTimeout:
-                break
-
-            cards = (page.query_selector_all("[data-product-id]") or
-                     page.query_selector_all(".product-tile") or [])
-            if not cards:
-                break
-
-            products = []
-            for card in cards:
-                try:
-                    pnum = (card.get_attribute("data-product-id") or
-                            card.get_attribute("data-sku") or "").strip()
-                    ne   = (card.query_selector("[class*='name']") or
-                            card.query_selector("[class*='title']") or
-                            card.query_selector("h3") or card.query_selector("h2"))
-                    name = ne.inner_text().strip() if ne else ""
-                    re_  = (card.query_selector("[class*='regular']") or
-                            card.query_selector("[class*='was']") or
-                            card.query_selector("[class*='original']"))
-                    reg  = re_.inner_text().strip() if re_ else ""
-                    pe   = (card.query_selector("[class*='sale']") or
-                            card.query_selector("[class*='promo']") or
-                            card.query_selector("[class*='now']"))
-                    pro  = pe.inner_text().strip() if pe else ""
-                    if not reg and not pro:
-                        px = card.query_selector("[class*='price']")
-                        reg = px.inner_text().strip() if px else ""
-                    if name or pnum:
-                        products.append({
-                            "Category":       dept_name,
-                            "Product Name":   name,
-                            "Product Number": pnum,
-                            "Regular Price":  reg,
-                            "Promo Price":    pro,
-                        })
-                except Exception:
-                    continue
-
-            for pr in products:
-                key = pr["Product Number"] or pr["Product Name"]
-                if key and key not in all_products:
-                    all_products[key] = pr
-
-            p(f"    Page {page_num}: {len(products)} items  (total: {len(all_products)})")
-            if len(products) < 48:
-                break
-            page_num += 1
-
-        p(f"    Done: {dept_name}")
-
-    browser.close()
-    p(f"\n  Save On Foods finished — {len(all_products):,} unique products.\n")
-    return list(all_products.values())
+        page.close()
+    except Exception:
+        pass
+    p(f"\n  {site_name} finished — {len(all_prods):,} unique products.\n")
+    return list(all_prods.values())
 
 
 # ─────────────────────────────────────────────────────────────────
-#  Excel builder  (5 columns: Category, Name, Number, Regular, Promo)
+#  Excel builder
 # ─────────────────────────────────────────────────────────────────
-COLS = ["Category", "Product Name", "Product Number", "Regular Price", "Promo Price"]
-COL_WIDTHS = [28, 48, 18, 16, 16]
+COLS       = ["Category", "Product Name", "Product Number", "Regular Price", "Promo Price"]
+COL_WIDTHS = [28, 50, 18, 16, 16]
 
-# Category → colour map (cycles through palette for new categories)
 CAT_COLOURS = [
     "D9E1F2", "E2EFDA", "FCE4D6", "FFF2CC", "EDEDED",
     "D6E4F7", "F2D7EE", "D7F2EE", "F7ECD6", "E8D7F2",
@@ -780,10 +562,8 @@ CAT_COLOURS = [
 
 
 def build_excel(products, filepath, store_name):
-    # Sort by category then product name
     products = sorted(products, key=lambda x: (x.get("Category", ""),
                                                x.get("Product Name", "")))
-
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = store_name[:31]
@@ -792,7 +572,6 @@ def build_excel(products, filepath, store_name):
         s = Side(style="thin", color=color)
         return Border(left=s, right=s, top=s, bottom=s)
 
-    # ── Title rows ──────────────────────────────────────────────
     last_col = get_column_letter(len(COLS))
 
     ws.merge_cells(f"A1:{last_col}1")
@@ -811,7 +590,6 @@ def build_excel(products, filepath, store_name):
     c.alignment = Alignment(horizontal="center")
     ws.row_dimensions[2].height = 14
 
-    # ── Header row ──────────────────────────────────────────────
     for i, col in enumerate(COLS, 1):
         c = ws.cell(row=3, column=i, value=col)
         c.font      = Font(bold=True, color="FFFFFF", size=11)
@@ -820,7 +598,6 @@ def build_excel(products, filepath, store_name):
         c.border    = bdr()
     ws.row_dimensions[3].height = 22
 
-    # ── Data rows ───────────────────────────────────────────────
     cat_colour_idx = {}
     colour_counter = 0
     prev_cat = None
@@ -831,27 +608,18 @@ def build_excel(products, filepath, store_name):
             cat_colour_idx[cat] = colour_counter % len(CAT_COLOURS)
             colour_counter += 1
 
-        # Slightly darker shade for first row of a new category
         is_cat_start = (cat != prev_cat)
         prev_cat = cat
+        fill = PatternFill("solid", fgColor=CAT_COLOURS[cat_colour_idx[cat]])
 
-        fill_hex = CAT_COLOURS[cat_colour_idx[cat]]
-        fill     = PatternFill("solid", fgColor=fill_hex)
-
-        values = [
-            cat,
-            pr.get("Product Name",   ""),
-            pr.get("Product Number", ""),
-            pr.get("Regular Price",  ""),
-            pr.get("Promo Price",    ""),
-        ]
+        values = [cat, pr.get("Product Name",""), pr.get("Product Number",""),
+                  pr.get("Regular Price",""), pr.get("Promo Price","")]
         for col_i, val in enumerate(values, 1):
             c = ws.cell(row=row_i, column=col_i, value=val)
             c.border    = bdr("C9C9C9")
             c.fill      = fill
             c.alignment = Alignment(vertical="center")
 
-        # Per-column alignment/font overrides
         ws.cell(row=row_i, column=1).font      = Font(color="444444", size=9, italic=True)
         ws.cell(row=row_i, column=2).alignment = Alignment(horizontal="left", vertical="center")
         ws.cell(row=row_i, column=3).alignment = Alignment(horizontal="center", vertical="center")
@@ -861,16 +629,13 @@ def build_excel(products, filepath, store_name):
         if pr.get("Promo Price"):
             ws.cell(row=row_i, column=5).font = Font(bold=True, color="C00000")
 
-        # Bold top border on category start
         if is_cat_start and row_i > 4:
             for col_i in range(1, len(COLS) + 1):
                 old = ws.cell(row=row_i, column=col_i).border
                 ws.cell(row=row_i, column=col_i).border = Border(
                     left=old.left, right=old.right, bottom=old.bottom,
-                    top=Side(style="medium", color="888888")
-                )
+                    top=Side(style="medium", color="888888"))
 
-    # ── Column widths & freeze ───────────────────────────────────
     for i, w in enumerate(COL_WIDTHS, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A4"
@@ -889,26 +654,51 @@ def main():
     p(f"  Started at    : {datetime.now().strftime('%I:%M %p')}")
     p()
 
-    fresh   = []
-    save_on = []
+    results = {}
 
     try:
         with sync_playwright() as pw:
-            fresh = scrape_fresh_st(pw)
-            if fresh:
-                p("  Building Fresh St. Market Excel file...")
-                build_excel(fresh, FRESH_ST_FILE, "Fresh St. Market")
-            else:
-                p("  [!] No Fresh St. Market products collected.")
+            for site_name, cfg in SITES.items():
+                # Save On Foods needs the real Chrome browser to bypass Cloudflare.
+                # Fresh St. runs headlessly (no Chrome needed).
+                use_real_chrome = (site_name == "Save On Foods")
 
-            p()
+                chrome_proc = None
+                if use_real_chrome:
+                    p("─" * 60)
+                    p("  SAVE ON FOODS needs your real Chrome browser.")
+                    p("  Chrome will be closed and reopened automatically.")
+                    p("  If a security check appears, click it and wait —")
+                    p("  the script will continue on its own after ~5 seconds.")
+                    p("─" * 60)
+                    p()
+                    try:
+                        input("  Press ENTER to open Chrome and start Save On Foods... ")
+                    except (EOFError, KeyboardInterrupt):
+                        p("  Skipping Save On Foods.")
+                        results[site_name] = []
+                        continue
+                    chrome_proc = launch_chrome_cdp()
+                    p("  Chrome launched with remote debugging. Connecting...")
 
-            save_on = scrape_save_on(pw)
-            if save_on:
-                p("  Building Save On Foods Excel file...")
-                build_excel(save_on, SAVE_ON_FILE, "Save On Foods")
-            else:
-                p("  [!] Save On Foods — no products (likely Cloudflare blocked).")
+                prods = scrape_site(pw, site_name, cfg, use_real_chrome=use_real_chrome)
+                results[site_name] = prods
+
+                # Close the Chrome process we launched for Save On Foods
+                if chrome_proc:
+                    try:
+                        chrome_proc.terminate()
+                    except Exception:
+                        pass
+                    time.sleep(1)
+
+                if prods:
+                    p(f"  Building {site_name} Excel file...")
+                    build_excel(prods, cfg["file"], site_name)
+                    p()
+                else:
+                    p(f"  [!] No products collected for {site_name}.")
+                    p()
 
     except KeyboardInterrupt:
         p("\n  Stopped by user.")
@@ -917,19 +707,18 @@ def main():
         import traceback
         traceback.print_exc()
         p()
-        p("  Please send the error above to whoever set this up.")
+        p("  Please send the above error to whoever set this up.")
 
     mins, secs = divmod(int(time.time() - start), 60)
     p()
     p("=" * 60)
     p("  ALL DONE!")
     p("=" * 60)
-    if fresh:
-        p(f"  Fresh St. Market : {len(fresh):>6,} products  ->  Excel saved")
-    if save_on:
-        p(f"  Save On Foods    : {len(save_on):>6,} products  ->  Excel saved")
-    p(f"  Time taken       : {mins}m {secs}s")
-    p(f"  Files saved to   : {OUTPUT_DIR}")
+    for site_name, prods in results.items():
+        if prods:
+            p(f"  {site_name:<20}: {len(prods):>6,} products  ->  Excel saved")
+    p(f"  Time taken           : {mins}m {secs}s")
+    p(f"  Files saved to       : {OUTPUT_DIR}")
     p()
 
     try:
