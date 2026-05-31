@@ -173,6 +173,21 @@ def launch_chrome_cdp():
     Returns (proc, None).
     """
     import subprocess as sp
+
+    # Kill any lingering Chrome processes (background helpers etc.)
+    sp.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
+    time.sleep(2)
+
+    # Delete Chrome's profile lock files — if they exist Chrome thinks another
+    # instance owns the profile and exits without opening the debug port
+    for lock_name in ["LOCK", "SingletonLock", "SingletonCookie", "SingletonSocket"]:
+        lock_path = os.path.join(CHROME_USER_DATA, "Default", lock_name)
+        try:
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+        except Exception:
+            pass
+
     proc = sp.Popen([
         CHROME_EXE,
         f"--remote-debugging-port={CDP_PORT}",
@@ -183,7 +198,7 @@ def launch_chrome_cdp():
         "--window-size=1280,900",
         "about:blank",
     ])
-    time.sleep(5)
+    time.sleep(6)   # give Chrome time to start and open the debug port
     return proc, None
 
 
