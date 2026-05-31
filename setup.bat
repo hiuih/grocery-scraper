@@ -72,7 +72,7 @@ echo [Step 3 of 5]  Installing packages (playwright and openpyxl)...
 echo              This may take 1-2 minutes...
 echo.
 
-python -m pip install playwright openpyxl -q --no-warn-script-location
+python -m pip install playwright openpyxl requests -q --no-warn-script-location
 if %errorlevel% neq 0 (
     echo.
     echo  ERROR: Package install failed.
@@ -103,8 +103,33 @@ echo.
 echo              Browser downloaded OK.
 echo.
 
-REM --- STEP 5: Create shortcut on Desktop ---
-echo [Step 5 of 5]  Creating shortcut on your Desktop...
+REM --- STEP 5: Check for Chrome or Edge (needed for Save On Foods) ---
+echo [Step 5 of 6]  Checking for Chrome or Edge browser...
+
+set BROWSER_FOUND=0
+if exist "C:\Program Files\Google\Chrome\Application\chrome.exe"         set BROWSER_FOUND=1
+if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"   set BROWSER_FOUND=1
+if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"           set BROWSER_FOUND=1
+if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"  set BROWSER_FOUND=1
+if exist "C:\Program Files\Microsoft\Edge\Application\msedge.exe"        set BROWSER_FOUND=1
+
+if %BROWSER_FOUND%==1 (
+    echo              Chrome or Edge found. Save On Foods will work.
+) else (
+    echo.
+    echo  *** WARNING: Chrome and Edge not found ***
+    echo.
+    echo  Save On Foods requires Chrome or Edge to bypass its
+    echo  security check. The scraper will still run but will
+    echo  skip Save On Foods until you install one of these:
+    echo    Chrome: https://www.google.com/chrome
+    echo    Edge:   https://www.microsoft.com/edge
+    echo.
+)
+echo.
+
+REM --- STEP 6: Create shortcut on Desktop ---
+echo [Step 6 of 6]  Creating shortcut on your Desktop...
 
 set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"

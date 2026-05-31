@@ -120,20 +120,36 @@ SAVE_ON_FILE  = os.path.join(OUTPUT_DIR, "Save_On_Foods_Products.xlsx")
 #  Site configs  (both run on the same Wynshop platform)
 # ─────────────────────────────────────────────────────────────────
 SITES = {
-    "Fresh St. Market": {
-        "base":  "https://www.freshstmarket.com/sm/pickup/rsid/055",
-        "host":  "freshstmarket.com",
-        "file":  FRESH_ST_FILE,
-    },
     "Save On Foods": {
         "base":  "https://www.saveonfoods.com/sm/planning/rsid/1982",
         "host":  "saveonfoods.com",
         "file":  SAVE_ON_FILE,
     },
+    "Fresh St. Market": {
+        "base":  "https://www.freshstmarket.com/sm/pickup/rsid/055",
+        "host":  "freshstmarket.com",
+        "file":  FRESH_ST_FILE,
+    },
 }
 
-CHROME_EXE  = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-CDP_PORT    = 9222
+CDP_PORT = 9222
+
+# Auto-detect Chrome or Edge — tries common install locations
+def _find_browser():
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.join(os.path.expanduser("~"),
+                     r"AppData\Local\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+CHROME_EXE = _find_browser()
 
 # ─────────────────────────────────────────────────────────────────
 #  DOM selectors  (same on both sites)
@@ -530,17 +546,6 @@ def scrape_site(playwright, site_name, cfg, use_real_chrome=False):
                 p(f"  Promotions page {pg}/{promo_pages}  "
                   f"(total products: {len(all_prods):,})")
 
-    # ── Step 4: Sitemap gap-fill (Fresh St. only — has public sitemap) ──
-    sitemap_url = f"{base.split('/sm/')[0]}/sitemap.xml"
-    if "freshstmarket" in base:
-        p()
-        p("  Running sitemap gap-fill to catch any missed products...")
-        gap_prods = scrape_sitemap_gaps(page, base, set(all_prods.keys()))
-        for pr in gap_prods:
-            pn = pr["Product Number"]
-            if pn and pn not in all_prods:
-                all_prods[pn] = pr
-
     try:
         page.close()
     except Exception:
@@ -665,8 +670,18 @@ def main():
 
                 chrome_proc = None
                 if use_real_chrome:
+                    if not CHROME_EXE:
+                        p("─" * 60)
+                        p("  ERROR: Chrome or Edge not found on this computer.")
+                        p("  Save On Foods requires Chrome or Edge to bypass")
+                        p("  Cloudflare protection.")
+                        p("  Install Chrome from: https://www.google.com/chrome")
+                        p("  Then run the scraper again.")
+                        p("─" * 60)
+                        results[site_name] = []
+                        continue
                     p("─" * 60)
-                    p("  SAVE ON FOODS needs your real Chrome browser.")
+                    p("  SAVE ON FOODS needs your real Chrome/Edge browser.")
                     p("  Chrome will be closed and reopened automatically.")
                     p("  If a security check appears, click it and wait —")
                     p("  the script will continue on its own after ~5 seconds.")
