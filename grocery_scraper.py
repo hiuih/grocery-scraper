@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-GROCERY PRICE SCRAPER
-======================
-Scrapes every product from:
-  - Fresh St. Market  ->  Fresh_St_Market_Products.xlsx
-  - Save On Foods     ->  Save_On_Foods_Products.xlsx
+FRESH ST. MARKET PRICE SCRAPER
+================================
+Scrapes every product from Fresh St. Market (Vancouver House, store 055)
+and saves results to Fresh_St_Market_Products.xlsx on your Desktop.
+
+Expected output: ~8,712 unique products across all departments.
 
 HOW TO RUN:
-  Double-click "Run Grocery Scraper.bat"  OR  open a terminal and run:
+  Double-click "Run Grocery Scraper.bat"  OR  run:
       python grocery_scraper.py
-  Results appear on your Desktop when finished (~30-90 min).
+  Takes about 30-40 minutes. Excel file appears on your Desktop when done.
 """
 
 # ── Fix console encoding ──────────────────────────────────────────
@@ -39,7 +40,7 @@ def p(msg="", flush=True):
 import subprocess
 
 p("=" * 60)
-p("  GROCERY PRICE SCRAPER")
+p("  FRESH ST. MARKET PRICE SCRAPER")
 p("=" * 60)
 p()
 p("Checking dependencies...")
@@ -52,7 +53,7 @@ def pip_install(pkg):
         subprocess.run([sys.executable, "-m", "pip", "install", pkg])
 
 
-for pkg in ["playwright", "openpyxl", "requests"]:
+for pkg in ["playwright", "openpyxl"]:
     try:
         __import__(pkg)
         p(f"  [OK] {pkg}")
@@ -71,7 +72,7 @@ p()
 #  Imports
 # ─────────────────────────────────────────────────────────────────
 try:
-    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    from playwright.sync_api import sync_playwright
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
@@ -114,145 +115,23 @@ def find_desktop():
 
 OUTPUT_DIR    = find_desktop()
 FRESH_ST_FILE = os.path.join(OUTPUT_DIR, "Fresh_St_Market_Products.xlsx")
-SAVE_ON_FILE  = os.path.join(OUTPUT_DIR, "Save_On_Foods_Products.xlsx")
 
 # ─────────────────────────────────────────────────────────────────
-#  Site configs  (both run on the same Wynshop platform)
+#  Site config
 # ─────────────────────────────────────────────────────────────────
-SITES = {
-    "Save On Foods": {
-        "base":  "https://www.saveonfoods.com/sm/planning/rsid/1982",
-        "host":  "saveonfoods.com",
-        "file":  SAVE_ON_FILE,
-    },
-    "Fresh St. Market": {
-        "base":  "https://www.freshstmarket.com/sm/pickup/rsid/055",
-        "host":  "freshstmarket.com",
-        "file":  FRESH_ST_FILE,
-    },
-}
-
-CDP_PORT = 9222
-
-# Auto-detect Chrome or Edge — tries common install locations
-def _find_browser():
-    candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.join(os.path.expanduser("~"),
-                     r"AppData\Local\Google\Chrome\Application\chrome.exe"),
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return None
-
-CHROME_EXE = _find_browser()
+FRESH_ST_BASE = "https://www.freshstmarket.com/sm/pickup/rsid/055"
 
 # ─────────────────────────────────────────────────────────────────
-#  DOM selectors  (same on both sites)
+#  DOM selectors
 # ─────────────────────────────────────────────────────────────────
 CARD_SEL  = "[data-testid^='ProductCardWrapper']"
 PRICE_SEL = "[class*='ProductPrice--']"
 WAS_SEL   = "[class*='ProductWasPrice--']"
 
 # ─────────────────────────────────────────────────────────────────
-#  Browser helpers
+#  Browser
 # ─────────────────────────────────────────────────────────────────
-CHROME_USER_DATA = os.path.join(os.path.expanduser("~"),
-                                r"AppData\Local\Google\Chrome\User Data")
-
-
-def _port_open(host, port):
-    import socket
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1)
-        s.connect((host, port))
-        s.close()
-        return True
-    except Exception:
-        return False
-
-
-def _wait_for_port(host, port, timeout=30):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if _port_open(host, port):
-            return True
-        time.sleep(1)
-    return False
-
-
-def launch_chrome_cdp():
-    """
-    Launch Chrome with the user's REAL profile + remote debugging.
-    Returns (proc, None). Chrome must be fully closed beforehand.
-    """
-    import subprocess as sp
-
-    # Kill ALL lingering Chrome processes
-    for _ in range(3):
-        sp.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"],
-               capture_output=True)
-        time.sleep(1)
-
-    # Delete Chrome profile lock files so it doesn't detect a "running" instance
-    for lock_name in ["LOCK", "SingletonLock", "SingletonCookie", "SingletonSocket"]:
-        lock_path = os.path.join(CHROME_USER_DATA, "Default", lock_name)
-        try:
-            if os.path.exists(lock_path):
-                os.remove(lock_path)
-                p(f"    Removed lock file: {lock_name}")
-        except Exception:
-            pass
-
-    p(f"    Launching Chrome from: {CHROME_EXE}")
-    proc = sp.Popen([
-        CHROME_EXE,
-        f"--remote-debugging-port={CDP_PORT}",
-        f"--user-data-dir={CHROME_USER_DATA}",
-        "--profile-directory=Default",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--window-size=1280,900",
-        "about:blank",
-    ])
-    p(f"    Chrome PID: {proc.pid} — waiting for debug port {CDP_PORT}...")
-
-    if _wait_for_port("127.0.0.1", CDP_PORT, timeout=30):
-        p(f"    Debug port {CDP_PORT} is open!")
-    else:
-        p(f"    [!] Chrome debug port never opened after 30s.")
-        p(f"        Chrome exit code: {proc.poll()}")
-    return proc, None
-
-
-def make_browser(playwright, use_real_chrome=False):
-    """
-    use_real_chrome=True  → attach to Chrome via CDP on port 9222 (real fingerprint,
-                            bypasses Cloudflare). Call launch_chrome_cdp() first.
-    use_real_chrome=False → headless Chromium (fast, works for Fresh St.).
-    Returns (browser, context).
-    """
-    if use_real_chrome:
-        # Retry a few times — Chrome needs a moment to start its debug port
-        last_err = None
-        for attempt in range(6):
-            try:
-                browser = playwright.chromium.connect_over_cdp(
-                    f"http://127.0.0.1:{CDP_PORT}", timeout=8000)
-                ctx = (browser.contexts[0]
-                       if browser.contexts
-                       else browser.new_context(viewport={"width": 1280, "height": 900}))
-                return browser, ctx
-            except Exception as e:
-                last_err = e
-                time.sleep(2)
-        raise RuntimeError(f"Could not connect to Chrome on port {CDP_PORT}: {last_err}")
-
+def make_browser(playwright):
     browser = playwright.chromium.launch(headless=True)
     ctx = browser.new_context(
         user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -265,33 +144,15 @@ def make_browser(playwright, use_real_chrome=False):
     return browser, ctx
 
 
-def is_blocked(page):
-    c = page.content().lower()
-    # Only flag as blocked if it's actually a Cloudflare challenge page,
-    # not just any page that references Cloudflare as a CDN
-    return ("just a moment" in c and "checking" in c) or \
-           "cf-browser-verification" in c or \
-           "__cf_chl_" in c or \
-           ("ray id" in c and "enable javascript" in c)
-
-
 def safe_goto(page, url, retries=2):
     for attempt in range(retries + 1):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=40000)
             time.sleep(2.5)
-            # Wait up to 30s if Cloudflare challenge appears
-            if is_blocked(page):
-                p("    [cf] Cloudflare challenge — waiting for it to pass...")
-                for _ in range(12):
-                    time.sleep(5)
-                    if not is_blocked(page):
-                        p("    [cf] Passed.")
-                        break
             return True
         except Exception as e:
             if attempt == retries:
-                p(f"    [!] Failed after {retries+1} attempts: {e}")
+                p(f"    [!] Failed: {e}")
                 return False
             time.sleep(3)
     return False
@@ -300,23 +161,16 @@ def safe_goto(page, url, retries=2):
 # ─────────────────────────────────────────────────────────────────
 #  Category discovery
 # ─────────────────────────────────────────────────────────────────
-def discover_categories(page, base_url, host):
-    """
-    Load /departments and return list of (slug, name) for every LEAF
-    subcategory (those that have a parent/child slug with a '/').
-    Leaf categories are the ones that contain actual products.
-    """
-    p(f"  Discovering categories from /departments...")
-    if not safe_goto(page, f"{base_url}/departments"):
+def discover_categories(page):
+    p("  Discovering categories from /departments...")
+    if not safe_goto(page, f"{FRESH_ST_BASE}/departments"):
         return []
 
-    js = f"""
-    (() => {{
-        const prefix = 'https://www.{host}';
-        const links = Array.from(document.querySelectorAll('a[href*="/categories/"]'));
-        const seen = new Set();
-        const results = [];
-        for (const a of links) {{
+    js = """
+    (() => {
+        const prefix = 'https://www.freshstmarket.com';
+        const seen = new Set(); const results = [];
+        for (const a of document.querySelectorAll('a[href*="/categories/"]')) {
             const slug = a.href
                 .replace(prefix, '')
                 .replace(/\\/sm\\/[^/]+\\/rsid\\/\\d+/, '')
@@ -325,10 +179,10 @@ def discover_categories(page, base_url, host):
             if (!slug || seen.has(slug) || slug.startsWith('category/')) continue;
             if (!slug.includes('-id-')) continue;
             seen.add(slug);
-            results.push({{ slug, name: a.innerText.trim() }});
-        }}
+            results.push({ slug, name: a.innerText.trim() });
+        }
         return results;
-    }})()
+    })()
     """
     try:
         all_cats = page.evaluate(js)
@@ -336,14 +190,13 @@ def discover_categories(page, base_url, host):
         p(f"  [!] Category discovery error: {e}")
         return []
 
-    # Only leaf categories (slug contains '/' = has a parent/child path)
     leafs = [c for c in all_cats if '/' in c['slug']]
     p(f"  Found {len(leafs)} leaf categories  ({len(all_cats)} total incl. parents)")
     return [(c['slug'], c['name']) for c in leafs]
 
 
 # ─────────────────────────────────────────────────────────────────
-#  Product extraction from one page
+#  Product extraction from one loaded page
 # ─────────────────────────────────────────────────────────────────
 def extract_products(page, category=""):
     cards = page.query_selector_all(CARD_SEL)
@@ -353,14 +206,12 @@ def extract_products(page, category=""):
             raw_id = card.get_attribute("data-testid") or ""
             pnum   = raw_id.replace("ProductCardWrapper-", "").lstrip("0") or raw_id
 
-            # Second <p> is the clean product name; first has price appended in aria form
             ps   = card.query_selector_all("p")
             name = ""
             if len(ps) >= 2:
                 name = ps[1].inner_text().strip()
             elif ps:
                 name = re.sub(r",\s*\$[\d.]+.*$", "", ps[0].inner_text()).strip()
-
             name = name.replace("Open Product Description", "").strip()
 
             pe      = card.query_selector(PRICE_SEL)
@@ -385,21 +236,12 @@ def extract_products(page, category=""):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  Paginate through all pages of a URL
+#  Paginate through all pages of one category URL
 # ─────────────────────────────────────────────────────────────────
 def scrape_all_pages(page, base_url, category, page_size=30):
-    """
-    Scrape page 1, read total count, then paginate with ?page=N&skip=M.
-    Returns list of product dicts.
-    """
     if not safe_goto(page, base_url):
         return []
 
-    if is_blocked(page):
-        p(f"    [!] Blocked.")
-        return []
-
-    # Read total from pagination widget
     total_items = 0
     try:
         pag_el = page.query_selector('[class*="Pagination"]')
@@ -410,7 +252,7 @@ def scrape_all_pages(page, base_url, category, page_size=30):
     except Exception:
         pass
 
-    prods_p1 = extract_products(page, category)
+    prods_p1    = extract_products(page, category)
     if not prods_p1 and total_items == 0:
         return []
 
@@ -424,9 +266,6 @@ def scrape_all_pages(page, base_url, category, page_size=30):
         url = f"{base_url}?page={pg}&skip={(pg-1)*page_size}"
         if not safe_goto(page, url):
             break
-        if is_blocked(page):
-            p(f"    [!] Blocked at page {pg}.")
-            break
         prods = extract_products(page, category)
         if not prods:
             break
@@ -439,111 +278,30 @@ def scrape_all_pages(page, base_url, category, page_size=30):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  Sitemap gap-fill  (catches any products not in any category page)
+#  Main Fresh St. scraper
 # ─────────────────────────────────────────────────────────────────
-def scrape_sitemap_gaps(page, base_url, scraped_pnums_set):
-    """
-    Fetch /sitemap.xml, compare product SKUs with what was scraped,
-    navigate to each missing product page and read __PRELOADED_STATE__.product.
-    """
-    import requests as _req
-
-    host        = base_url.split('/sm/')[0]          # https://www.freshstmarket.com
-    sitemap_url = f"{host}/sitemap.xml"
-
-    p(f"  Fetching sitemap: {sitemap_url}")
-    try:
-        r = _req.get(sitemap_url, timeout=20,
-                     headers={"User-Agent": "Mozilla/5.0"})
-        text = r.text
-    except Exception as e:
-        p(f"  [!] Sitemap fetch failed: {e}")
-        return []
-
-    product_urls = re.findall(
-        r'https://www\.freshstmarket\.com/product/[^\s<>"]+', text)
-
-    missing = []
-    for url in product_urls:
-        m = re.search(r'-id-(\d+)$', url)
-        if not m:
-            continue
-        raw_sku = m.group(1)
-        sku     = raw_sku.lstrip("0") or raw_sku
-        if sku not in scraped_pnums_set:
-            slug = url.replace(f"{host}/product/", "")
-            missing.append((sku, slug))
-
-    p(f"  Sitemap: {len(product_urls)} products total, "
-      f"{len(missing)} not yet in scraped set")
-
-    if not missing:
-        p("  All sitemap products already captured!")
-        return []
-
-    results = []
-    for i, (sku, slug) in enumerate(missing, 1):
-        url = f"{base_url}/product/{slug}"
-        try:
-            if not safe_goto(page, url):
-                continue
-            prod = page.evaluate("window.__PRELOADED_STATE__?.product || {}")
-            if not isinstance(prod, dict) or not prod.get("name"):
-                continue
-
-            name     = str(prod.get("name", "")).strip()
-            price    = str(prod.get("price", "") or "").strip()
-            was      = str(prod.get("wasPrice", "") or "").strip()
-            is_disc  = bool(prod.get("isDiscounted", False))
-            cats     = prod.get("categories") or []
-            cat_name = cats[0].get("name", "") if cats else "Uncategorized"
-
-            results.append({
-                "Category":       cat_name,
-                "Product Name":   name,
-                "Product Number": sku,
-                "Regular Price":  was if (is_disc and was) else price,
-                "Promo Price":    price if (is_disc and was) else "",
-            })
-        except Exception:
-            pass
-
-        if i % 10 == 0 or i == len(missing):
-            p(f"  Gap fill: {i}/{len(missing)} done  ({len(results)} found)")
-
-    p(f"  Gap fill complete: {len(results)} additional products added.")
-    return results
-
-
-# ─────────────────────────────────────────────────────────────────
-#  Main site scraper
-# ─────────────────────────────────────────────────────────────────
-def scrape_site(playwright, site_name, cfg, use_real_chrome=False):
+def scrape_fresh_st(playwright):
     p("=" * 60)
-    p(f"  Scraping {site_name.upper()}")
+    p("  Scraping FRESH ST. MARKET")
     p("=" * 60)
 
-    base     = cfg["base"]
-    host     = cfg["host"]
-    all_prods = {}   # pnum -> dict
-
-    browser, ctx = make_browser(playwright, use_real_chrome)
+    browser, ctx = make_browser(playwright)
     page = ctx.new_page()
+    all_prods = {}
 
-    # ── Step 1: Discover categories ───────────────────────────────
-    categories = discover_categories(page, base, host)
+    # Step 1: Discover all leaf categories
+    categories = discover_categories(page)
     if not categories:
-        p("  [!] Could not discover categories. Trying promotions page only.")
-        categories = []
+        p("  [!] No categories found.")
+        browser.close()
+        return []
 
     p()
     total_cats = len(categories)
 
-    # ── Step 2: Scrape each leaf category ─────────────────────────
+    # Step 2: Scrape each category
     for i, (slug, cat_name) in enumerate(categories, 1):
-        url = f"{base}/categories/{slug}"
-        p(f"  [{i}/{total_cats}] {cat_name}", flush=True)
-
+        url   = f"{FRESH_ST_BASE}/categories/{slug}"
         prods = scrape_all_pages(page, url, cat_name)
 
         new = 0
@@ -555,14 +313,16 @@ def scrape_site(playwright, site_name, cfg, use_real_chrome=False):
                 all_prods[pn] = pr
                 new += 1
 
-        p(f"    {len(prods)} items  (+{new} new, running total: {len(all_prods)})")
+        p(f"  [{i}/{total_cats}] {cat_name}")
+        p(f"    {len(prods)} items  (+{new} new, running total: {len(all_prods):,})")
 
-    # ── Step 3: Overlay promo prices from /promotions ─────────────
+    # Step 3: Overlay promo prices from /promotions
     p()
     p("  Overlaying promo prices from /promotions...")
-    promo_url = f"{base}/promotions"
+    promo_url   = f"{FRESH_ST_BASE}/promotions"
     promo_total = 0
-    if safe_goto(page, promo_url) and not is_blocked(page):
+
+    if safe_goto(page, promo_url):
         try:
             pag_el = page.query_selector('[class*="Pagination"]')
             if pag_el:
@@ -579,31 +339,28 @@ def scrape_site(playwright, site_name, cfg, use_real_chrome=False):
             url = f"{promo_url}?page={pg}&skip={(pg-1)*30}"
             if pg > 1 and not safe_goto(page, url):
                 break
-            if pg > 1 and is_blocked(page):
-                break
             prods = extract_products(page, "Sale")
             for pr in prods:
                 pn = pr["Product Number"]
                 if not pn:
                     continue
                 if pn in all_prods:
-                    # Update promo price on existing product
                     if pr.get("Promo Price"):
-                        all_prods[pn]["Promo Price"]   = pr["Promo Price"]
-                        all_prods[pn]["Regular Price"]  = pr["Regular Price"]
+                        all_prods[pn]["Promo Price"]  = pr["Promo Price"]
+                        all_prods[pn]["Regular Price"] = pr["Regular Price"]
                 else:
-                    # Product only found in promotions (not in any category)
                     all_prods[pn] = pr
 
             if pg % 10 == 0 or pg == promo_pages:
-                p(f"  Promotions page {pg}/{promo_pages}  "
-                  f"(total products: {len(all_prods):,})")
+                p(f"  Promotions page {pg}/{promo_pages}  (total: {len(all_prods):,})")
 
     try:
         page.close()
     except Exception:
         pass
-    p(f"\n  {site_name} finished — {len(all_prods):,} unique products.\n")
+    browser.close()
+
+    p(f"\n  Fresh St. finished — {len(all_prods):,} unique products.\n")
     return list(all_prods.values())
 
 
@@ -619,12 +376,12 @@ CAT_COLOURS = [
 ]
 
 
-def build_excel(products, filepath, store_name):
+def build_excel(products, filepath):
     products = sorted(products, key=lambda x: (x.get("Category", ""),
                                                x.get("Product Name", "")))
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = store_name[:31]
+    ws.title = "Fresh St. Market"
 
     def bdr(color="BDD7EE"):
         s = Side(style="thin", color=color)
@@ -634,7 +391,7 @@ def build_excel(products, filepath, store_name):
 
     ws.merge_cells(f"A1:{last_col}1")
     c = ws["A1"]
-    c.value     = f"{store_name}  -  Product Price List"
+    c.value     = "Fresh St. Market  -  Product Price List"
     c.font      = Font(bold=True, size=14, color="1F4E79")
     c.alignment = Alignment(horizontal="center", vertical="center")
     c.fill      = PatternFill("solid", fgColor="D6E4F7")
@@ -658,7 +415,7 @@ def build_excel(products, filepath, store_name):
 
     cat_colour_idx = {}
     colour_counter = 0
-    prev_cat = None
+    prev_cat       = None
 
     for row_i, pr in enumerate(products, 4):
         cat = pr.get("Category", "")
@@ -667,7 +424,7 @@ def build_excel(products, filepath, store_name):
             colour_counter += 1
 
         is_cat_start = (cat != prev_cat)
-        prev_cat = cat
+        prev_cat     = cat
         fill = PatternFill("solid", fgColor=CAT_COLOURS[cat_colour_idx[cat]])
 
         values = [cat, pr.get("Product Name",""), pr.get("Product Number",""),
@@ -679,11 +436,11 @@ def build_excel(products, filepath, store_name):
             c.alignment = Alignment(vertical="center")
 
         ws.cell(row=row_i, column=1).font      = Font(color="444444", size=9, italic=True)
-        ws.cell(row=row_i, column=2).alignment = Alignment(horizontal="left", vertical="center")
+        ws.cell(row=row_i, column=2).alignment = Alignment(horizontal="left",   vertical="center")
         ws.cell(row=row_i, column=3).alignment = Alignment(horizontal="center", vertical="center")
         ws.cell(row=row_i, column=3).font      = Font(name="Courier New", size=9)
-        ws.cell(row=row_i, column=4).alignment = Alignment(horizontal="right", vertical="center")
-        ws.cell(row=row_i, column=5).alignment = Alignment(horizontal="right", vertical="center")
+        ws.cell(row=row_i, column=4).alignment = Alignment(horizontal="right",  vertical="center")
+        ws.cell(row=row_i, column=5).alignment = Alignment(horizontal="right",  vertical="center")
         if pr.get("Promo Price"):
             ws.cell(row=row_i, column=5).font = Font(bold=True, color="C00000")
 
@@ -712,75 +469,17 @@ def main():
     p(f"  Started at    : {datetime.now().strftime('%I:%M %p')}")
     p()
 
-    results = {}
+    products = []
 
     try:
         with sync_playwright() as pw:
-            for site_name, cfg in SITES.items():
-                # Save On Foods needs the real Chrome browser to bypass Cloudflare.
-                # Fresh St. runs headlessly (no Chrome needed).
-                use_real_chrome = (site_name == "Save On Foods")
+            products = scrape_fresh_st(pw)
 
-                chrome_proc = None
-                chrome_tmp  = None
-                if use_real_chrome:
-                    if not CHROME_EXE:
-                        p("─" * 60)
-                        p("  ERROR: Chrome or Edge not found on this computer.")
-                        p("  Save On Foods requires Chrome or Edge to bypass")
-                        p("  Cloudflare protection.")
-                        p("  Install Chrome from: https://www.google.com/chrome")
-                        p("  Then run the scraper again.")
-                        p("─" * 60)
-                        results[site_name] = []
-                        continue
-                    p("─" * 60)
-                    p("  SAVE ON FOODS — ACTION REQUIRED")
-                    p()
-                    p("  1. CLOSE Google Chrome completely (all windows).")
-                    p("     (This conversation will still be saved — you can")
-                    p("      reopen it on claude.ai when scraping is done.)")
-                    p()
-                    p("  2. Press ENTER here once Chrome is fully closed.")
-                    p()
-                    p("  Chrome will reopen automatically with your profile")
-                    p("  so Save On Foods won't block it.")
-                    p("─" * 60)
-                    p()
-                    try:
-                        input("  Press ENTER when Chrome is fully closed... ")
-                    except (EOFError, KeyboardInterrupt):
-                        p("  Skipping Save On Foods.")
-                        results[site_name] = []
-                        continue
-                    chrome_proc, chrome_tmp = launch_chrome_cdp()
-                    p("  Chrome launched with remote debugging. Connecting...")
-
-                prods = scrape_site(pw, site_name, cfg, use_real_chrome=use_real_chrome)
-                results[site_name] = prods
-
-                # Close the Chrome process we launched for Save On Foods
-                if chrome_proc:
-                    try:
-                        chrome_proc.terminate()
-                    except Exception:
-                        pass
-                    time.sleep(1)
-                    # Clean up temp profile dir if one was used
-                    if chrome_tmp:
-                        try:
-                            import shutil
-                            shutil.rmtree(chrome_tmp, ignore_errors=True)
-                        except Exception:
-                            pass
-
-                if prods:
-                    p(f"  Building {site_name} Excel file...")
-                    build_excel(prods, cfg["file"], site_name)
-                    p()
-                else:
-                    p(f"  [!] No products collected for {site_name}.")
-                    p()
+        if products:
+            p("  Building Excel file...")
+            build_excel(products, FRESH_ST_FILE)
+        else:
+            p("  [!] No products collected.")
 
     except KeyboardInterrupt:
         p("\n  Stopped by user.")
@@ -796,11 +495,10 @@ def main():
     p("=" * 60)
     p("  ALL DONE!")
     p("=" * 60)
-    for site_name, prods in results.items():
-        if prods:
-            p(f"  {site_name:<20}: {len(prods):>6,} products  ->  Excel saved")
-    p(f"  Time taken           : {mins}m {secs}s")
-    p(f"  Files saved to       : {OUTPUT_DIR}")
+    if products:
+        p(f"  Fresh St. Market : {len(products):>6,} products")
+        p(f"  File saved to    : {FRESH_ST_FILE}")
+    p(f"  Time taken       : {mins}m {secs}s")
     p()
 
     try:
