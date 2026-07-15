@@ -42,11 +42,13 @@ Promo prices appear in **bold red** when a product is on sale.
 
 ## Running the scraper
 
-After setup, just double-click **`Run Grocery Scraper.bat`** on your Desktop.
+After setup, just double-click **`Run Grocery Scraper.bat`** on your Desktop. It runs both scrapers back to back.
 
-- Takes **15–30 minutes** to complete
+- Fresh St. Market takes **30–40 minutes** (~213 categories, ~8,500 products)
+- Save-On-Foods takes **1–3 hours** (~815 categories, ~22,000 products) — it's slower because it has to work around Cloudflare bot protection
 - Two Excel files are saved to your Desktop when done
-- The browser runs in the background (you won't see it)
+- Fresh St. Market runs fully in the background (no window)
+- Save-On-Foods runs headless too, but may briefly **open a visible browser window** once or twice per run if Cloudflare needs re-verifying. Usually it clears itself in a few seconds; if it ever shows a checkbox or puzzle, just click it and the scraper carries on automatically.
 
 ---
 
@@ -54,14 +56,16 @@ After setup, just double-click **`Run Grocery Scraper.bat`** on your Desktop.
 
 | Site | Status |
 |------|--------|
-| Fresh St. Market | Fully supported — scrapes all 22 categories |
-| Save On Foods | Attempted — may be blocked by Cloudflare bot protection |
+| Fresh St. Market | Fully supported — scrapes all ~213 categories |
+| Save On Foods | Fully supported — scrapes all ~815 categories, works around Cloudflare automatically |
 
-The scraper uses **Playwright** (a headless Chromium browser) to load each page, scroll to reveal lazy-loaded products, and extract:
+Both scripts use **Playwright**-based headless Chromium to load each category page, paginate through results, and extract:
 - Product name
 - Product number (UPC/barcode)
 - Regular price
 - Promo/sale price (if currently on sale)
+
+Save-On-Foods sits behind Cloudflare bot protection, so `save_on_foods_scraper.py` uses `patchright` (a stealth Playwright build) instead of plain Playwright, and falls back to a real, visible browser window to clear the challenge if headless attempts are rejected — then reuses that session's cookies for the rest of the run.
 
 ---
 
@@ -69,7 +73,9 @@ The scraper uses **Playwright** (a headless Chromium browser) to load each page,
 
 ```
 grocery-scraper/
-├── grocery_scraper.py   ← main scraper script
-├── setup.bat            ← one-click installer for new computers
+├── grocery_scraper.py         ← Fresh St. Market scraper
+├── save_on_foods_scraper.py   ← Save-On-Foods scraper
+├── setup.bat                  ← one-click installer for new computers
+├── Run Grocery Scraper.bat    ← runs both scrapers
 └── README.md
 ```

@@ -68,11 +68,11 @@ echo              Done.
 echo.
 
 REM --- STEP 3: Install packages ---
-echo [Step 3 of 5]  Installing packages (playwright and openpyxl)...
+echo [Step 3 of 5]  Installing packages (playwright, patchright and openpyxl)...
 echo              This may take 1-2 minutes...
 echo.
 
-python -m pip install playwright openpyxl requests -q --no-warn-script-location
+python -m pip install playwright patchright openpyxl requests -q --no-warn-script-location
 if %errorlevel% neq 0 (
     echo.
     echo  ERROR: Package install failed.
@@ -91,6 +91,7 @@ echo              Please wait...
 echo.
 
 python -m playwright install chromium --with-deps
+python -m patchright install chromium
 if %errorlevel% neq 0 (
     echo.
     echo  ERROR: Browser download failed.
