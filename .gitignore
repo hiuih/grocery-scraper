@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.xlsx
 .saveon_session.json
+.DS_Store
+.Rhistory
+.claude/
+.claude-flow/
