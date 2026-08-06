@@ -425,6 +425,11 @@ def scrape_save_on_foods(playwright):
         browser.close()
         return []
 
+    limit = int(os.environ.get("SCRAPE_CATEGORY_LIMIT", "0"))
+    if limit:
+        categories = categories[:limit]
+        p(f"  [TEST MODE] Limiting to {limit} categories.")
+
     p()
     total_cats = len(categories)
 
@@ -461,6 +466,8 @@ def scrape_save_on_foods(playwright):
             pass
 
         promo_pages = max(1, -(-promo_total // 30)) if promo_total else 1
+        if limit:
+            promo_pages = min(promo_pages, limit)
         p(f"  Promotions: {promo_total:,} items across {promo_pages} pages")
 
         for pg in range(1, promo_pages + 1):

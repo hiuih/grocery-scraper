@@ -12,6 +12,11 @@ on:
         description: 'Override recipient email (for test runs)'
         required: false
         default: ''
+      test_mode:
+        description: 'Limit each site to a couple categories (fast smoke test)'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   scrape:
@@ -39,11 +44,15 @@ jobs:
 
       - name: Run Fresh St. Market scraper
         id: freshst
+        env:
+          SCRAPE_CATEGORY_LIMIT: ${{ github.event.inputs.test_mode == 'true' && '2' || '' }}
         run: xvfb-run -a python grocery_scraper.py < /dev/null
         continue-on-error: true
 
       - name: Run Save-On-Foods scraper
         id: saveon
+        env:
+          SCRAPE_CATEGORY_LIMIT: ${{ github.event.inputs.test_mode == 'true' && '2' || '' }}
         run: xvfb-run -a python save_on_foods_scraper.py < /dev/null
         continue-on-error: true
 
