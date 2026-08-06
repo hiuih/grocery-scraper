@@ -56,17 +56,10 @@ jobs:
         run: xvfb-run -a python save_on_foods_scraper.py < /dev/null
         continue-on-error: true
 
-      - name: Install Composio CLI
-        run: curl -fsSL https://composio.dev/install | bash
-
-      - name: Authenticate Composio
-        run: |
-          export PATH="$HOME/.composio/bin:$PATH"
-          composio login --user-api-key "${{ secrets.COMPOSIO_API_KEY }}"
-
       - name: Email results
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: |
-          export PATH="$HOME/.composio/bin:$PATH"
           RECIPIENT="${{ github.event.inputs.recipient }}"
           RECIPIENT="${RECIPIENT:-shahbazibmm@gmail.com}"
           python3 scripts/send_report.py "${{ steps.freshst.outcome }}" "${{ steps.saveon.outcome }}" "$RECIPIENT"

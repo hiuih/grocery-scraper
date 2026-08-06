@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Emails the weekly scrape results (or a failure notice) via the Composio CLI.
+"""Emails the weekly scrape results (or a failure notice) via Gmail SMTP.
 
 Usage: send_report.py <freshst_outcome> <saveon_outcome> <recipient_email>
   outcomes are GitHub Actions step outcomes: "success" or "failure"
+  Requires GMAIL_APP_PASSWORD env var (an app password for SENDER, not the
+  account's normal login password).
 """
-import json
 import os
-import subprocess
+import smtplib
 import sys
 from datetime import datetime
+from email.message import EmailMessage
 
 HOME = os.path.expanduser("~")
-FAILURE_RECIPIENT = "sadrabajoghli2777727@gmail.com"
+SENDER = "sadrabajoghli2777727@gmail.com"
+FAILURE_RECIPIENT = SENDER
 
 FILES = {
     "Fresh St. Market": os.path.join(HOME, "Desktop", "Fresh_St_Market_Products.xlsx"),
@@ -19,11 +22,25 @@ FILES = {
 }
 
 
-def send(payload):
-    subprocess.run(
-        ["composio", "execute", "GMAIL_SEND_EMAIL", "-d", json.dumps(payload)],
-        check=True,
-    )
+def send(to, subject, body, attachments=()):
+    msg = EmailMessage()
+    msg["From"] = SENDER
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+    for path in attachments:
+        with open(path, "rb") as f:
+            data = f.read()
+        msg.add_attachment(
+            data,
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=os.path.basename(path),
+        )
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(SENDER, os.environ["GMAIL_APP_PASSWORD"])
+        smtp.send_message(msg)
 
 
 def main():
@@ -44,22 +61,15 @@ def main():
         body += "\n".join(f"- {name}" for name in present)
         if failed:
             body += f"\n\nNote: {', '.join(failed)} did not complete successfully this run."
-        send({
-            "recipient_email": recipient,
-            "subject": f"Grocery Price Data — {today}",
-            "body": body,
-            "attachment": list(present.values()),
-        })
+        send(recipient, f"Grocery Price Data — {today}", body, present.values())
 
     if failed:
-        send({
-            "recipient_email": FAILURE_RECIPIENT,
-            "subject": "Weekly grocery scrape had a failure",
-            "body": (
-                f"{', '.join(failed)} failed during this week's scheduled run "
-                f"({today}). Check the GitHub Actions log for details."
-            ),
-        })
+        send(
+            FAILURE_RECIPIENT,
+            "Weekly grocery scrape had a failure",
+            f"{', '.join(failed)} failed during this week's scheduled run "
+            f"({today}). Check the GitHub Actions log for details.",
+        )
 
     if not present:
         sys.exit(1)
