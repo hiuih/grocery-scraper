@@ -1,0 +1,63 @@
+name: Weekly Grocery Price Scrape
+
+on:
+  schedule:
+    # 11:00 PM Saturday Pacific ≈ 06:00 UTC Sunday during PDT (roughly Mar–Nov).
+    # GitHub Actions cron is fixed UTC and doesn't observe DST, so during PST
+    # (roughly Nov–Mar) this actually fires ~1 hour earlier, at 10 PM Pacific.
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      recipient:
+        description: 'Override recipient email (for test runs)'
+        required: false
+        default: ''
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install playwright patchright openpyxl
+
+      - name: Install browsers
+        run: |
+          python -m playwright install chromium --with-deps
+          python -m patchright install chromium
+
+      - name: Install Xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Run Fresh St. Market scraper
+        id: freshst
+        run: xvfb-run -a python grocery_scraper.py < /dev/null
+        continue-on-error: true
+
+      - name: Run Save-On-Foods scraper
+        id: saveon
+        run: xvfb-run -a python save_on_foods_scraper.py < /dev/null
+        continue-on-error: true
+
+      - name: Install Composio CLI
+        run: curl -fsSL https://composio.dev/install | bash
+
+      - name: Authenticate Composio
+        run: |
+          export PATH="$HOME/.composio/bin:$PATH"
+          composio login --user-api-key "${{ secrets.COMPOSIO_API_KEY }}" --no-browser -y
+
+      - name: Email results
+        run: |
+          export PATH="$HOME/.composio/bin:$PATH"
+          RECIPIENT="${{ github.event.inputs.recipient }}"
+          RECIPIENT="${RECIPIENT:-shahbazibmm@gmail.com}"
+          python3 scripts/send_report.py "${{ steps.freshst.outcome }}" "${{ steps.saveon.outcome }}" "$RECIPIENT"
