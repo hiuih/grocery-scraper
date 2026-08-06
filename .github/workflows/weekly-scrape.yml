@@ -62,7 +62,7 @@ jobs:
       - name: Authenticate Composio
         run: |
           export PATH="$HOME/.composio/bin:$PATH"
-          composio login --user-api-key "${{ secrets.COMPOSIO_API_KEY }}" --no-browser -y
+          composio login --user-api-key "${{ secrets.COMPOSIO_API_KEY }}"
 
       - name: Email results
         run: |
