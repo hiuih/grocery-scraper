@@ -296,7 +296,8 @@ def scrape_fresh_st(playwright):
         browser.close()
         return []
 
-    limit = int(os.environ.get("SCRAPE_CATEGORY_LIMIT", "0"))
+    limit_env = os.environ.get("SCRAPE_CATEGORY_LIMIT", "").strip()
+    limit = int(limit_env) if limit_env else 0
     if limit:
         categories = categories[:limit]
         p(f"  [TEST MODE] Limiting to {limit} categories.")
