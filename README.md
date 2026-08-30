@@ -67,6 +67,21 @@ Both scripts use **Playwright**-based headless Chromium to load each category pa
 
 Save-On-Foods sits behind Cloudflare bot protection, so `save_on_foods_scraper.py` uses `patchright` (a stealth Playwright build) instead of plain Playwright, and falls back to a real, visible browser window to clear the challenge if headless attempts are rejected — then reuses that session's cookies for the rest of the run.
 
+### Optional: proxy for Save-On-Foods
+
+Cloudflare is more likely to block GitHub Actions' shared datacenter IPs than a normal home connection. If the scheduled run starts failing Cloudflare's check repeatedly, route it through a pool of proxies by setting a `PROXY_LIST` GitHub repo secret (Settings → Secrets and variables → Actions).
+
+`PROXY_LIST` is the raw contents of a proxy list, one proxy per line, in `host:port:username:password` format (the format Webshare exports; use `host:port` with no `:username:password` for an unauthenticated proxy):
+
+```
+31.59.20.176:6754:myuser:mypass
+45.38.107.97:6014:myuser:mypass
+```
+
+Every new browser session (and every Cloudflare-challenge retry) rotates to the next proxy in the list, so a single blocked IP doesn't stall the whole run. Leave `PROXY_LIST` unset to run without a proxy (the default). This only applies to `save_on_foods_scraper.py` — Fresh St. Market has no bot protection and doesn't need one. To test locally, `export PROXY_LIST="$(cat your-proxy-list.txt)"` before running the script.
+
+Note: free public proxy lists are not a good fit here — they're unreliable (most entries are already dead) and often have worse Cloudflare reputation than a plain datacenter IP since they're heavily abused by other bots. Use a paid provider's proxies instead.
+
 ---
 
 ## Files

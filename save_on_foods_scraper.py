@@ -119,6 +119,43 @@ CHALLENGE_RETRIES = 3
 CHALLENGE_TEXT_MARKERS = ("security verification", "just a moment", "checking your browser")
 
 
+def load_proxy_pool():
+    """Reads a list of static proxies from the PROXY_LIST env var, one per line,
+    in Webshare's "host:port:username:password" format (username/password
+    optional: "host:port" also works for unauthenticated proxies).
+    """
+    raw = os.environ.get("PROXY_LIST", "")
+    pool = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(":")
+        if len(parts) not in (2, 4):
+            continue
+        host, port = parts[0], parts[1]
+        config = {"server": f"http://{host}:{port}"}
+        if len(parts) == 4:
+            config["username"], config["password"] = parts[2], parts[3]
+        pool.append(config)
+    return pool
+
+
+PROXY_POOL = load_proxy_pool()
+_proxy_cursor = {"i": 0}
+
+
+def next_proxy():
+    """Round-robins through PROXY_POOL so each new browser context (and each
+    Cloudflare-challenge retry) gets a different exit IP. Returns None if no
+    proxies are configured."""
+    if not PROXY_POOL:
+        return None
+    config = PROXY_POOL[_proxy_cursor["i"] % len(PROXY_POOL)]
+    _proxy_cursor["i"] += 1
+    return config
+
+
 def wait_for_real_content(page, max_wait=25):
     """Poll body text: Cloudflare's challenge page renders almost-empty (~8 chars) or
     shows its own verification copy (~267 chars) before the real app hydrates."""
@@ -146,11 +183,15 @@ def headed_clear_and_save(playwright, timeout=45000):
     p("  Opening a visible browser window to clear Cloudflare's check...")
     p("  (If a checkbox or puzzle appears, solve it — this should only happen once.)")
     browser = playwright.chromium.launch(headless=False)
-    ctx = browser.new_context(
+    ctx_kwargs = dict(
         user_agent=USER_AGENT,
         viewport={"width": 1280, "height": 900},
         locale="en-CA",
     )
+    proxy = next_proxy()
+    if proxy:
+        ctx_kwargs["proxy"] = proxy
+    ctx = browser.new_context(**ctx_kwargs)
     page = ctx.new_page()
     cleared = False
     try:
@@ -195,6 +236,9 @@ def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_he
         )
         if state_path:
             ctx_kwargs["storage_state"] = state_path
+        proxy = next_proxy()
+        if proxy:
+            ctx_kwargs["proxy"] = proxy
         ctx = browser.new_context(**ctx_kwargs)
         ctx.route("**/*.{mp4,mp3,avi,wmv,woff2,woff}", lambda r: r.abort())
         page = ctx.new_page()
@@ -208,7 +252,8 @@ def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_he
                 return ctx, page
         except Exception:
             pass
-        p(f"    [!] Cloudflare challenge attempt {attempt + 1}/{CHALLENGE_RETRIES} failed, retrying...")
+        proxy_note = f" (proxy {proxy['server']})" if proxy else ""
+        p(f"    [!] Cloudflare challenge attempt {attempt + 1}/{CHALLENGE_RETRIES} failed{proxy_note}, retrying...")
         try:
             ctx.close()
         except Exception:
@@ -404,6 +449,7 @@ def scrape_save_on_foods(playwright):
     p("=" * 60)
     p("  Scraping SAVE-ON-FOODS")
     p("=" * 60)
+    p(f"  Proxy pool: {len(PROXY_POOL)} proxies loaded" if PROXY_POOL else "  Proxy pool: disabled (no PROXY_LIST set)")
 
     browser = playwright.chromium.launch(headless=True)
     all_prods = {}

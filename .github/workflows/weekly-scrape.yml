@@ -53,6 +53,7 @@ jobs:
         id: saveon
         env:
           SCRAPE_CATEGORY_LIMIT: ${{ github.event.inputs.test_mode == 'true' && '2' || '' }}
+          PROXY_LIST: ${{ secrets.PROXY_LIST }}
         run: xvfb-run -a python save_on_foods_scraper.py < /dev/null
         continue-on-error: true
 
