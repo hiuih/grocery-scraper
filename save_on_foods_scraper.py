@@ -240,7 +240,17 @@ def headed_clear_and_save(playwright, timeout=45000):
 def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_headed=True):
     """Open a fresh context/page and retry until Cloudflare's challenge clears.
     Reuses saved session cookies when available; falls back to a one-time
-    visible-browser clearance if quick headless attempts don't get through."""
+    visible-browser clearance if quick headless attempts don't get through.
+
+    Always lands on SAVEON_BASE first, even when a deeper warm_url is
+    requested. A brand-new context that jumps straight to a category page
+    passes the Cloudflare check fine (the page's server-rendered HTML shows
+    products immediately) but the client-side code then re-fetches live
+    inventory for the store, and without the MI9_RSID/MI9_SHOPPING_MODE
+    cookies that only get set by first visiting the store root, that re-fetch
+    comes back empty and silently wipes the product list a moment later —
+    the page still "looks" cleared, it just has zero real products on it.
+    """
     state_path = STATE_FILE if os.path.exists(STATE_FILE) else None
 
     for attempt in range(CHALLENGE_RETRIES):
@@ -259,8 +269,12 @@ def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_he
         ctx.route("**/*.{mp4,mp3,avi,wmv,woff2,woff}", lambda r: r.abort())
         page = ctx.new_page()
         try:
-            page.goto(warm_url or SAVEON_BASE, wait_until="domcontentloaded", timeout=timeout)
-            if wait_for_real_content(page, max_wait=25):
+            page.goto(SAVEON_BASE, wait_until="domcontentloaded", timeout=timeout)
+            cleared = wait_for_real_content(page, max_wait=25)
+            if cleared and warm_url and warm_url != SAVEON_BASE:
+                page.goto(warm_url, wait_until="domcontentloaded", timeout=timeout)
+                cleared = wait_for_real_content(page, max_wait=25)
+            if cleared:
                 try:
                     ctx.storage_state(path=STATE_FILE)
                 except Exception:
