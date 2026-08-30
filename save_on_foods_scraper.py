@@ -143,17 +143,32 @@ def load_proxy_pool():
 
 PROXY_POOL = load_proxy_pool()
 _proxy_cursor = {"i": 0}
+BLACKLISTED_PROXIES = set()
 
 
 def next_proxy():
     """Round-robins through PROXY_POOL so each new browser context (and each
-    Cloudflare-challenge retry) gets a different exit IP. Returns None if no
-    proxies are configured."""
-    if not PROXY_POOL:
+    Cloudflare-challenge retry) gets a different exit IP. Skips any proxy
+    blacklist_proxy() has flagged this run. Returns None if no usable
+    proxies are configured/left."""
+    available = [c for c in PROXY_POOL if c["server"] not in BLACKLISTED_PROXIES]
+    if not available:
         return None
-    config = PROXY_POOL[_proxy_cursor["i"] % len(PROXY_POOL)]
+    config = available[_proxy_cursor["i"] % len(available)]
     _proxy_cursor["i"] += 1
     return config
+
+
+def blacklist_proxy(proxy):
+    """Some proxy IPs render a normal-looking page (no Cloudflare challenge
+    text) but serve an empty/wrong-region storefront with zero products —
+    e.g. a non-Canadian exit IP hitting a store scoped to a specific
+    delivery area. That's invisible to is_challenged(), so the category
+    loop calls this after too many consecutive empty categories."""
+    if proxy:
+        BLACKLISTED_PROXIES.add(proxy["server"])
+        p(f"    [!] Blacklisted proxy {proxy['server']} for the rest of this run "
+          f"({len(PROXY_POOL) - len(BLACKLISTED_PROXIES)} of {len(PROXY_POOL)} proxies left).")
 
 
 def wait_for_real_content(page, max_wait=25):
@@ -240,6 +255,7 @@ def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_he
         if proxy:
             ctx_kwargs["proxy"] = proxy
         ctx = browser.new_context(**ctx_kwargs)
+        ctx.proxy_used = proxy
         ctx.route("**/*.{mp4,mp3,avi,wmv,woff2,woff}", lambda r: r.abort())
         page = ctx.new_page()
         try:
@@ -479,6 +495,8 @@ def scrape_save_on_foods(playwright):
 
     p()
     total_cats = len(categories)
+    EMPTY_STREAK_LIMIT = 5
+    empty_streak = 0
 
     for i, (slug, cat_name) in enumerate(categories, 1):
         url   = f"{SAVEON_BASE}/categories/{slug}"
@@ -495,6 +513,31 @@ def scrape_save_on_foods(playwright):
 
         p(f"  [{i}/{total_cats}] {cat_name}")
         p(f"    {len(prods)} items  (+{new} new, running total: {len(all_prods):,})")
+
+        if prods:
+            empty_streak = 0
+        else:
+            empty_streak += 1
+            if empty_streak >= EMPTY_STREAK_LIMIT:
+                # A page can load "cleanly" (no Cloudflare challenge text) while
+                # still serving an empty/wrong-region storefront — e.g. a proxy
+                # exit IP outside this store's delivery area. is_challenged()
+                # can't see that, so catch it here instead: too many categories
+                # in a row with zero items means the current session/proxy is bad.
+                bad_proxy = getattr(page_holder["ctx"], "proxy_used", None)
+                if bad_proxy:
+                    blacklist_proxy(bad_proxy)
+                else:
+                    p(f"    [!] {empty_streak} categories in a row returned 0 items — forcing a fresh session.")
+                try:
+                    page_holder["ctx"].close()
+                except Exception:
+                    pass
+                ctx, new_page = new_cleared_page(playwright, browser, warm_url=url)
+                if new_page is not None:
+                    page_holder["ctx"] = ctx
+                    page_holder["page"] = new_page
+                empty_streak = 0
 
     p()
     p("  Overlaying promo prices from /promotions...")

@@ -17,6 +17,11 @@ on:
         type: boolean
         required: false
         default: false
+      disable_proxy:
+        description: 'Skip PROXY_LIST for this run (test Save-On-Foods without a proxy)'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   freshst:
@@ -87,7 +92,7 @@ jobs:
       - name: Run Save-On-Foods scraper
         env:
           SCRAPE_CATEGORY_LIMIT: ${{ github.event.inputs.test_mode == 'true' && '2' || '' }}
-          PROXY_LIST: ${{ secrets.PROXY_LIST }}
+          PROXY_LIST: ${{ github.event.inputs.disable_proxy == 'true' && '' || secrets.PROXY_LIST }}
         run: xvfb-run -a python save_on_foods_scraper.py < /dev/null
 
       - name: Stage output for upload
