@@ -21,7 +21,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 270
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,6 +44,7 @@ jobs:
 
       - name: Run Fresh St. Market scraper
         id: freshst
+        timeout-minutes: 60
         env:
           SCRAPE_CATEGORY_LIMIT: ${{ github.event.inputs.test_mode == 'true' && '2' || '' }}
         run: xvfb-run -a python grocery_scraper.py < /dev/null
@@ -51,6 +52,7 @@ jobs:
 
       - name: Run Save-On-Foods scraper
         id: saveon
+        timeout-minutes: 180
         env:
           SCRAPE_CATEGORY_LIMIT: ${{ github.event.inputs.test_mode == 'true' && '2' || '' }}
           PROXY_LIST: ${{ secrets.PROXY_LIST }}
