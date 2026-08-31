@@ -171,6 +171,21 @@ def blacklist_proxy(proxy):
           f"({len(PROXY_POOL) - len(BLACKLISTED_PROXIES)} of {len(PROXY_POOL)} proxies left).")
 
 
+PROXY_CONNECTION_ERROR_MARKERS = (
+    "err_tunnel_connection_failed", "err_proxy_connection_failed",
+    "err_socks_connection_failed", "err_no_supported_proxies",
+    "err_connection_refused", "err_connection_reset", "err_empty_response",
+)
+
+
+def is_proxy_connection_error(exc):
+    """True if `exc` looks like the proxy itself is dead/unreachable (bad
+    credentials, expired plan, IP not allow-listed, ...) rather than a
+    Cloudflare challenge — those load the page fine and just show challenge
+    text, whereas a dead proxy fails the connection before any page loads."""
+    return any(m in str(exc).lower() for m in PROXY_CONNECTION_ERROR_MARKERS)
+
+
 def wait_for_real_content(page, max_wait=25):
     """Poll body text: Cloudflare's challenge page renders almost-empty (~8 chars) or
     shows its own verification copy (~267 chars) before the real app hydrates."""
@@ -222,6 +237,8 @@ def headed_clear_and_save(playwright, timeout=45000):
                 pass
     except Exception as e:
         p(f"    [!] Headed clearance error: {e}")
+        if is_proxy_connection_error(e):
+            blacklist_proxy(proxy)
 
     if cleared:
         ctx.storage_state(path=STATE_FILE)
@@ -237,7 +254,7 @@ def headed_clear_and_save(playwright, timeout=45000):
     return cleared
 
 
-def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_headed=True):
+def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_headed=True, use_proxy=True):
     """Open a fresh context/page and retry until Cloudflare's challenge clears.
     Reuses saved session cookies when available; falls back to a one-time
     visible-browser clearance if quick headless attempts don't get through.
@@ -261,7 +278,7 @@ def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_he
         )
         if state_path:
             ctx_kwargs["storage_state"] = state_path
-        proxy = next_proxy()
+        proxy = next_proxy() if use_proxy else None
         if proxy:
             ctx_kwargs["proxy"] = proxy
         ctx = browser.new_context(**ctx_kwargs)
@@ -280,8 +297,9 @@ def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_he
                 except Exception:
                     pass
                 return ctx, page
-        except Exception:
-            pass
+        except Exception as e:
+            if is_proxy_connection_error(e):
+                blacklist_proxy(proxy)
         proxy_note = f" (proxy {proxy['server']})" if proxy else ""
         p(f"    [!] Cloudflare challenge attempt {attempt + 1}/{CHALLENGE_RETRIES} failed{proxy_note}, retrying...")
         try:
@@ -295,6 +313,12 @@ def new_cleared_page(playwright, browser, warm_url=None, timeout=30000, allow_he
         p("    [!] Headless retries exhausted — falling back to a one-time visible-browser clearance.")
         if headed_clear_and_save(playwright, timeout=45000):
             return new_cleared_page(playwright, browser, warm_url=warm_url, timeout=timeout, allow_headed=False)
+
+    if use_proxy and PROXY_POOL:
+        p("    [!] Every proxy attempt failed (dead/unreachable proxy pool) — "
+          "retrying once with a direct connection instead.")
+        return new_cleared_page(playwright, browser, warm_url=warm_url, timeout=timeout,
+                                 allow_headed=allow_headed, use_proxy=False)
 
     return None, None
 
