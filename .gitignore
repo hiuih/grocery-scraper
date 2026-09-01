@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.venv/
 *.xlsx
 .saveon_session.json
 .DS_Store

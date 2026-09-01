@@ -537,8 +537,36 @@ def scrape_save_on_foods(playwright):
     empty_streak = 0
 
     for i, (slug, cat_name) in enumerate(categories, 1):
-        url   = f"{SAVEON_BASE}/categories/{slug}"
-        prods = scrape_all_pages(playwright, browser, page_holder, url, cat_name)
+        url = f"{SAVEON_BASE}/categories/{slug}"
+        try:
+            prods = scrape_all_pages(playwright, browser, page_holder, url, cat_name)
+        except Exception as e:
+            # A crashed browser process (e.g. "Target crashed") makes every
+            # existing context/page dead too — relaunch from scratch rather
+            # than letting one bad category kill the entire multi-hour run.
+            p(f"    [!] Category crashed ({e}); relaunching browser and continuing...")
+            try:
+                page_holder["ctx"].close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
+            browser = playwright.chromium.launch(headless=True)
+            ctx, new_page = new_cleared_page(playwright, browser, warm_url=url)
+            if new_page is not None:
+                page_holder["ctx"] = ctx
+                page_holder["page"] = new_page
+            prods = []
+
+        if i % 50 == 0:
+            # Checkpoint to disk periodically so a later crash (or hitting a
+            # CI/local time budget) doesn't lose everything collected so far.
+            try:
+                build_excel(list(all_prods.values()), SAVEON_FILE)
+            except Exception:
+                pass
 
         new = 0
         for pr in prods:
@@ -579,50 +607,59 @@ def scrape_save_on_foods(playwright):
 
     p()
     p("  Overlaying promo prices from /promotions...")
-    promo_url   = f"{SAVEON_BASE}/promotions"
-    promo_total = 0
+    try:
+        promo_url   = f"{SAVEON_BASE}/promotions"
+        promo_total = 0
 
-    if safe_goto(playwright, browser, page_holder, promo_url):
-        page = page_holder["page"]
-        try:
-            pag_el = page.query_selector('[class*="Pagination"]')
-            if pag_el:
-                m = re.search(r"of\s+([\d,]+)", pag_el.inner_text())
-                if m:
-                    promo_total = int(m.group(1).replace(",", ""))
-        except Exception:
-            pass
-
-        promo_pages = max(1, -(-promo_total // 30)) if promo_total else 1
-        if limit:
-            promo_pages = min(promo_pages, limit)
-        p(f"  Promotions: {promo_total:,} items across {promo_pages} pages")
-
-        for pg in range(1, promo_pages + 1):
-            url = f"{promo_url}?page={pg}&skip={(pg-1)*30}"
-            if pg > 1 and not safe_goto(playwright, browser, page_holder, url):
-                break
+        if safe_goto(playwright, browser, page_holder, promo_url):
             page = page_holder["page"]
-            prods = extract_products(page, "Sale")
-            for pr in prods:
-                pn = pr["Product Number"]
-                if not pn:
-                    continue
-                if pn in all_prods:
-                    if pr.get("Promo Price"):
-                        all_prods[pn]["Promo Price"]  = pr["Promo Price"]
-                        all_prods[pn]["Regular Price"] = pr["Regular Price"]
-                else:
-                    all_prods[pn] = pr
+            try:
+                pag_el = page.query_selector('[class*="Pagination"]')
+                if pag_el:
+                    m = re.search(r"of\s+([\d,]+)", pag_el.inner_text())
+                    if m:
+                        promo_total = int(m.group(1).replace(",", ""))
+            except Exception:
+                pass
 
-            if pg % 10 == 0 or pg == promo_pages:
-                p(f"  Promotions page {pg}/{promo_pages}  (total: {len(all_prods):,})")
+            promo_pages = max(1, -(-promo_total // 30)) if promo_total else 1
+            if limit:
+                promo_pages = min(promo_pages, limit)
+            p(f"  Promotions: {promo_total:,} items across {promo_pages} pages")
+
+            for pg in range(1, promo_pages + 1):
+                url = f"{promo_url}?page={pg}&skip={(pg-1)*30}"
+                if pg > 1 and not safe_goto(playwright, browser, page_holder, url):
+                    break
+                page = page_holder["page"]
+                prods = extract_products(page, "Sale")
+                for pr in prods:
+                    pn = pr["Product Number"]
+                    if not pn:
+                        continue
+                    if pn in all_prods:
+                        if pr.get("Promo Price"):
+                            all_prods[pn]["Promo Price"]  = pr["Promo Price"]
+                            all_prods[pn]["Regular Price"] = pr["Regular Price"]
+                    else:
+                        all_prods[pn] = pr
+
+                if pg % 10 == 0 or pg == promo_pages:
+                    p(f"  Promotions page {pg}/{promo_pages}  (total: {len(all_prods):,})")
+    except Exception as e:
+        # Category data (the vast majority of the run's value) is already in
+        # all_prods regardless of what happens here — don't let a crash during
+        # the promo overlay throw all of it away.
+        p(f"    [!] Promo overlay crashed ({e}); keeping category data collected so far.")
 
     try:
         page_holder["ctx"].close()
     except Exception:
         pass
-    browser.close()
+    try:
+        browser.close()
+    except Exception:
+        pass
 
     p(f"\n  Save-On-Foods finished — {len(all_prods):,} unique products.\n")
     return list(all_prods.values())
