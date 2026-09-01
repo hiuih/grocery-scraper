@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Emails the weekly scrape results (or a failure notice) via Gmail SMTP.
+"""Emails one site's scrape result (or a failure notice) via Gmail SMTP,
+as soon as that site's job finishes -- independent of the other site.
 
-Usage: send_report.py <freshst_outcome> <saveon_outcome> <recipient_email>
-  outcomes are GitHub Actions step outcomes: "success" or "failure"
+Usage: send_report.py <site_name> <outcome> <file_path> <recipient_email>
+  outcome is a GitHub Actions job status ("success", "failure", "cancelled");
+  anything other than exactly "success" is treated as a failure.
   Requires GMAIL_APP_PASSWORD env var (an app password for SENDER, not the
   account's normal login password).
 """
@@ -12,14 +14,8 @@ import sys
 from datetime import datetime
 from email.message import EmailMessage
 
-HOME = os.path.expanduser("~")
 SENDER = "sadrabajoghli2777727@gmail.com"
 FAILURE_RECIPIENT = SENDER
-
-FILES = {
-    "Fresh St. Market": os.path.join(HOME, "Desktop", "Fresh_St_Market_Products.xlsx"),
-    "Save-On-Foods": os.path.join(HOME, "Desktop", "Save_On_Foods_Products.xlsx"),
-}
 
 
 def send(to, subject, body, attachments=()):
@@ -44,34 +40,24 @@ def send(to, subject, body, attachments=()):
 
 
 def main():
-    freshst_ok = sys.argv[1] == "success"
-    saveon_ok = sys.argv[2] == "success"
-    recipient = sys.argv[3]
-
-    present = {name: path for name, path in FILES.items() if os.path.exists(path)}
-    failed = [
-        name
-        for name, ok in [("Fresh St. Market", freshst_ok), ("Save-On-Foods", saveon_ok)]
-        if not ok
-    ]
+    site_name, outcome, file_path, recipient = sys.argv[1:5]
+    ok = outcome == "success" and os.path.exists(file_path)
     today = datetime.now().strftime("%B %d, %Y")
 
-    if present:
-        body = f"Weekly grocery price scrape — {today}\n\nAttached:\n"
-        body += "\n".join(f"- {name}" for name in present)
-        if failed:
-            body += f"\n\nNote: {', '.join(failed)} did not complete successfully this run."
-        send(recipient, f"Grocery Price Data — {today}", body, present.values())
-
-    if failed:
+    if ok:
+        send(
+            recipient,
+            f"{site_name} Price Data — {today}",
+            f"{site_name} price scrape — {today}\n\nAttached: {os.path.basename(file_path)}",
+            [file_path],
+        )
+    else:
         send(
             FAILURE_RECIPIENT,
-            "Weekly grocery scrape had a failure",
-            f"{', '.join(failed)} failed during this week's scheduled run "
-            f"({today}). Check the GitHub Actions log for details.",
+            f"{site_name} scrape failed",
+            f"{site_name} did not complete successfully this run ({today}, "
+            f"outcome: {outcome}). Check the GitHub Actions log for details.",
         )
-
-    if not present:
         sys.exit(1)
 
 
