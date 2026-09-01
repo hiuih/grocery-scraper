@@ -101,9 +101,13 @@ def find_desktop():
     return fb
 
 
+SHARD_INDEX = int(os.environ.get("SHARD_INDEX", "0") or "0")
+SHARD_COUNT = int(os.environ.get("SHARD_COUNT", "1") or "1")
+SHARD_SUFFIX = f"_shard{SHARD_INDEX}" if SHARD_COUNT > 1 else ""
+
 OUTPUT_DIR    = find_desktop()
-SAVEON_FILE   = os.path.join(OUTPUT_DIR, "Save_On_Foods_Products.xlsx")
-STATE_FILE    = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".saveon_session.json")
+SAVEON_FILE   = os.path.join(OUTPUT_DIR, f"Save_On_Foods_Products{SHARD_SUFFIX}.xlsx")
+STATE_FILE    = os.path.join(os.path.dirname(os.path.abspath(__file__)), f".saveon_session{SHARD_SUFFIX}.json")
 
 SAVEON_BASE = "https://www.saveonfoods.com/sm/pickup/rsid/1982"
 
@@ -463,27 +467,20 @@ def scrape_all_pages(playwright, browser, page_holder, base_url, category, page_
         return []
 
     page = page_holder["page"]
-    total_items = 0
-    try:
-        pag_el = page.query_selector('[class*="Pagination"]')
-        if pag_el:
-            m = re.search(r"of\s+([\d,]+)", pag_el.inner_text())
-            if m:
-                total_items = int(m.group(1).replace(",", ""))
-    except Exception:
-        pass
-
-    prods_p1 = extract_products(page, category)
-    if not prods_p1 and total_items == 0:
+    prods = extract_products(page, category)
+    if not prods:
         return []
 
-    if total_items == 0:
-        total_items = len(prods_p1)
+    all_prods = {pr["Product Number"]: pr for pr in prods if pr["Product Number"]}
 
-    total_pages = max(1, -(-total_items // page_size))
-    all_prods   = {pr["Product Number"]: pr for pr in prods_p1 if pr["Product Number"]}
-
-    for pg in range(2, total_pages + 1):
+    # Keep requesting subsequent pages as long as the previous one came back
+    # full, instead of trusting the pagination widget's "of N" text for a
+    # total up front — that widget is often not hydrated yet right when this
+    # runs, which was silently truncating every multi-page category to
+    # exactly page_size items (always precisely 30 — a dead giveaway once we
+    # looked for it across a real run).
+    pg = 2
+    while len(prods) >= page_size and pg <= 50:
         url = f"{base_url}?page={pg}&skip={(pg-1)*page_size}"
         if not safe_goto(playwright, browser, page_holder, url):
             break
@@ -491,10 +488,15 @@ def scrape_all_pages(playwright, browser, page_holder, base_url, category, page_
         prods = extract_products(page, category)
         if not prods:
             break
+        new_count = 0
         for pr in prods:
             pn = pr["Product Number"]
             if pn and pn not in all_prods:
                 all_prods[pn] = pr
+                new_count += 1
+        if new_count == 0:
+            break
+        pg += 1
 
     return list(all_prods.values())
 
@@ -524,6 +526,10 @@ def scrape_save_on_foods(playwright):
             pass
         browser.close()
         return []
+
+    if SHARD_COUNT > 1:
+        categories = categories[SHARD_INDEX::SHARD_COUNT]
+        p(f"  [SHARD {SHARD_INDEX}/{SHARD_COUNT}] Handling {len(categories)} of the categories found.")
 
     limit_env = os.environ.get("SCRAPE_CATEGORY_LIMIT", "").strip()
     limit = int(limit_env) if limit_env else 0
