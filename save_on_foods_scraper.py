@@ -66,7 +66,7 @@ try:
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-    import re, time
+    import re, time, random
     from datetime import datetime
 except ImportError as e:
     p(f"  ERROR: {e}")
@@ -210,6 +210,22 @@ def is_challenged(page):
     return not wait_for_real_content(page, max_wait=25)
 
 
+def human_pause(page, base=2.5, spread=1.5):
+    """A short randomized pause with a small mouse move and occasional scroll.
+    Cloudflare's behavioral layer (and its newer bot-detection models) scores
+    timing regularity and the presence/absence of real interaction signals,
+    not just browser fingerprint — a scraper that never moves the mouse and
+    always waits the exact same amount of time between requests is itself a
+    detectable pattern, independent of any JS-level stealth patches."""
+    try:
+        page.mouse.move(random.randint(100, 1100), random.randint(100, 800), steps=random.randint(3, 8))
+        if random.random() < 0.4:
+            page.mouse.wheel(0, random.randint(150, 600))
+    except Exception:
+        pass
+    time.sleep(base + random.uniform(0, spread))
+
+
 def headed_clear_and_save(playwright, timeout=45000):
     """Open a REAL, visible browser window so Cloudflare's challenge resolves the
     way it does for an ordinary human visitor, then save the resulting session
@@ -333,7 +349,7 @@ def safe_goto(playwright, browser, page_holder, url, retries=2):
         page = page_holder["page"]
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=40000)
-            time.sleep(2.5)
+            human_pause(page)
             if not is_challenged(page):
                 return True
             p("    [!] Hit Cloudflare challenge mid-run, opening fresh session...")
@@ -610,6 +626,12 @@ def scrape_save_on_foods(playwright):
                     page_holder["ctx"] = ctx
                     page_holder["page"] = new_page
                 empty_streak = 0
+
+        # A randomized gap between categories, on top of human_pause() inside
+        # safe_goto, avoids the perfectly-regular request cadence that
+        # Cloudflare's newer behavioral analysis (not just per-request JS
+        # checks) flags even when every individual request looks legitimate.
+        time.sleep(random.uniform(0.8, 2.5))
 
     p()
     p("  Overlaying promo prices from /promotions...")

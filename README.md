@@ -80,7 +80,16 @@ Cloudflare is more likely to block GitHub Actions' shared datacenter IPs than a 
 
 Every new browser session (and every Cloudflare-challenge retry) rotates to the next proxy in the list, so a single blocked IP doesn't stall the whole run. Leave `PROXY_LIST` unset to run without a proxy (the default). This only applies to `save_on_foods_scraper.py` — Fresh St. Market has no bot protection and doesn't need one. To test locally, `export PROXY_LIST="$(cat your-proxy-list.txt)"` before running the script.
 
-Note: free public proxy lists are not a good fit here — they're unreliable (most entries are already dead) and often have worse Cloudflare reputation than a plain datacenter IP since they're heavily abused by other bots. Use a paid provider's proxies instead.
+Note: free public proxy lists are not a good fit here — they're unreliable (most entries are already dead) and often have worse Cloudflare reputation than a plain datacenter IP since they're heavily abused by other bots. Use a paid provider's proxies instead, and prefer **residential** over datacenter — Cloudflare's bot-management scoring weighs IP reputation heavily, and residential IPs start with materially more trust than datacenter ranges. Country matters too: this store (`rsid=1982`) is BC-specific, so a non-Canadian exit IP can render a page that looks fine but silently shows an empty/wrong-region storefront.
+
+### If Cloudflare gets aggressive mid-run
+
+Cloudflare's bot management scores every request on IP reputation, TLS fingerprint, JS-challenge results, and behavior (mouse movement, timing) — not just "is this a real browser." Two things follow from that:
+
+- **IP reputation is dynamic and takes 24-72 hours to decay** after a burst of heavy automated traffic. If a run that used to clear challenges in seconds starts needing the visible-browser fallback on almost every category, that's your IP's threat score climbing, not a code bug — the fix is time, not retries. Hammering it harder (more parallel sessions, immediate re-runs) just digs the hole deeper.
+- **Concurrency accelerates this.** Running several sharded processes at once from one IP for hours is exactly the sustained-automated-traffic pattern Cloudflare's reputation system flags hardest. Sharding across 2-3 processes is a reasonable one-off speedup for an urgent run; running it routinely (e.g. every week) will likely degrade that IP's standing over time. For the regular weekly cron, a single unsharded run is the safer default.
+
+`patchright` (the stealth Playwright fork this uses) patches the browser/CDP-level tells — the `HeadlessChrome` UA string, `navigator.webdriver`, the `Runtime.enable` leak — which is what gets past Cloudflare's first-pass JS challenge. It does nothing for TLS fingerprinting or behavioral scoring, which is why `human_pause()` in the code adds small randomized mouse moves/scrolls and jittered delays between requests — cheap mitigation for the layers patchright can't touch, not a guarantee.
 
 ---
 
